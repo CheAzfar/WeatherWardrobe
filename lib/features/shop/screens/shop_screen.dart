@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+
 import '../../../core/constants/app_colors.dart';
 import '../models/marketplace_listing.dart';
 import '../services/marketplace_service.dart';
-import 'create_listing_screen.dart';
 import 'cart_screen.dart';
-import 'dart:io';
+import 'create_listing_screen.dart';
 
 class ShopScreen extends StatefulWidget {
   const ShopScreen({super.key});
@@ -32,12 +31,10 @@ class _ShopScreenState extends State<ShopScreen>
   }
 
   void _addToCart(MarketplaceListing item) {
-    setState(() {
-      _cart.add(item);
-    });
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('${item.name} added to cart')));
+    setState(() => _cart.add(item));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${item.name} added to cart')),
+    );
   }
 
   @override
@@ -114,13 +111,11 @@ class _ShopScreenState extends State<ShopScreen>
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
         final listings = snapshot.data ?? [];
-
         if (listings.isEmpty) {
           return const Center(child: Text('No items for sale yet'));
         }
@@ -134,10 +129,7 @@ class _ShopScreenState extends State<ShopScreen>
             childAspectRatio: 0.75,
           ),
           itemCount: listings.length,
-          itemBuilder: (context, index) {
-            final item = listings[index];
-            return _buildListingCard(item);
-          },
+          itemBuilder: (context, index) => _buildListingCard(listings[index]),
         );
       },
     );
@@ -150,13 +142,11 @@ class _ShopScreenState extends State<ShopScreen>
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
         final listings = snapshot.data ?? [];
-
         if (listings.isEmpty) {
           return const Center(
             child: Padding(
@@ -178,10 +168,7 @@ class _ShopScreenState extends State<ShopScreen>
             childAspectRatio: 0.75,
           ),
           itemCount: listings.length,
-          itemBuilder: (context, index) {
-            final item = listings[index];
-            return _buildMyListingCard(item);
-          },
+          itemBuilder: (context, index) => _buildMyListingCard(listings[index]),
         );
       },
     );
@@ -201,25 +188,8 @@ class _ShopScreenState extends State<ShopScreen>
           children: [
             Expanded(
               child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(18),
-                ),
-                child: (item.imagePath == null || item.imagePath!.isEmpty)
-                    ? Container(
-                        color: AppColors.softGreen.withOpacity(0.6),
-                        child: const Center(
-                          child: Icon(
-                            Icons.image_outlined,
-                            size: 40,
-                            color: AppColors.primaryGreen,
-                          ),
-                        ),
-                      )
-                    : Image.file(
-                        File(item.imagePath!),
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                      ),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+                child: _networkImage(item.imageUrl),
               ),
             ),
             Padding(
@@ -231,10 +201,7 @@ class _ShopScreenState extends State<ShopScreen>
                     item.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 14,
-                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -266,25 +233,8 @@ class _ShopScreenState extends State<ShopScreen>
         children: [
           Expanded(
             child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(18),
-              ),
-              child: (item.imagePath == null || item.imagePath!.isEmpty)
-                  ? Container(
-                      color: AppColors.softGreen.withOpacity(0.6),
-                      child: const Center(
-                        child: Icon(
-                          Icons.image_outlined,
-                          size: 40,
-                          color: AppColors.primaryGreen,
-                        ),
-                      ),
-                    )
-                  : Image.file(
-                      File(item.imagePath!),
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                    ),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+              child: _networkImage(item.imageUrl),
             ),
           ),
           Padding(
@@ -296,10 +246,7 @@ class _ShopScreenState extends State<ShopScreen>
                   item.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 14,
-                  ),
+                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
                 ),
                 const SizedBox(height: 4),
                 Row(
@@ -314,11 +261,7 @@ class _ShopScreenState extends State<ShopScreen>
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(
-                        Icons.delete,
-                        size: 18,
-                        color: Colors.red,
-                      ),
+                      icon: const Icon(Icons.delete, size: 18, color: Colors.red),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                       onPressed: () async {
@@ -326,9 +269,7 @@ class _ShopScreenState extends State<ShopScreen>
                           context: context,
                           builder: (_) => AlertDialog(
                             title: const Text('Delete Listing'),
-                            content: const Text(
-                              'Remove this item from marketplace?',
-                            ),
+                            content: const Text('Remove this item from marketplace?'),
                             actions: [
                               TextButton(
                                 onPressed: () => Navigator.pop(context, false),
@@ -336,9 +277,7 @@ class _ShopScreenState extends State<ShopScreen>
                               ),
                               ElevatedButton(
                                 onPressed: () => Navigator.pop(context, true),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.red,
-                                ),
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
                                 child: const Text('Delete'),
                               ),
                             ],
@@ -347,11 +286,10 @@ class _ShopScreenState extends State<ShopScreen>
 
                         if (confirm == true) {
                           await MarketplaceService.deleteListing(item.id);
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Listing deleted')),
-                            );
-                          }
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Listing deleted')),
+                          );
                         }
                       },
                     ),
@@ -362,6 +300,36 @@ class _ShopScreenState extends State<ShopScreen>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _networkImage(String url) {
+    if (url.isEmpty) {
+      return Container(
+        color: AppColors.softGreen.withValues(alpha: 0.6),
+        child: const Center(
+          child: Icon(Icons.image_outlined, size: 40, color: AppColors.primaryGreen),
+        ),
+      );
+    }
+
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      errorBuilder: (_, __, ___) => Container(
+        color: AppColors.softGreen.withValues(alpha: 0.6),
+        child: const Center(
+          child: Icon(Icons.broken_image_outlined, size: 40, color: AppColors.primaryGreen),
+        ),
+      ),
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+        return Container(
+          color: AppColors.softGreen.withValues(alpha: 0.35),
+          child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        );
+      },
     );
   }
 }
