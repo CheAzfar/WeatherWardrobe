@@ -34,7 +34,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   ///
   /// Expected response JSON:
   /// { "clientSecret": "...", "paymentIntentId": "pi_..." }
-  static const String stripeBackendUrl = '';
+  static const String stripeBackendUrl = 'https://createpaymentintent-g3f5ehvnnq-uc.a.run.app';
 
   Future<String?> _payWithStripe() async {
     if (stripeBackendUrl.trim().isEmpty) return null;

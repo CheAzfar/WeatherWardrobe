@@ -9,11 +9,10 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Firebase (required)
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  Stripe.publishableKey = 'pk_test_51SrKo7F25xLACdfSuSY9mCaRqTZY6jOIp7hDGlA2J6FUjvDOU4RGrsxxiyb2g3QPLbFBH2e9oP5daF5caKIJROeK00ebh1RcH9';
+  Stripe.publishableKey =
+      'pk_test_51SrHwI3uzkOxb9ef84LHpu96WTijJ00OSdv3KTKpNz6M3dKxITyKcgiTF0lv8lLJZEPsnxwQKjqKzV9ComzR0sdf00zoNk463I';
   await Stripe.instance.applySettings();
 
   runApp(const WeatherWardrobeApp());
