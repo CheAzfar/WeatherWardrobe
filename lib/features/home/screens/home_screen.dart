@@ -17,19 +17,37 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String _city = 'Kuala Lumpur';
-  late Future<WeatherInfo> _weatherFuture;
+  String _city = CityStore.defaultCity;
+
+  Future<WeatherInfo>? _weatherFuture;
 
   @override
   void initState() {
     super.initState();
-    _city = CityStore.getCity();
+
+    // Start with default city, so UI can render immediately
     _weatherFuture = WeatherService.fetchByCity(_city);
+
+    // Then load saved city from Firestore and refresh
+    _initCityAndWeather();
+  }
+
+  Future<void> _initCityAndWeather() async {
+    try {
+      final c = await CityStore.fetchCity(); // Firestore-based
+      if (!mounted) return;
+
+      setState(() {
+        _city = c;
+        _weatherFuture = WeatherService.fetchByCity(_city);
+      });
+    } catch (_) {
+      // If Firestore fails, keep default city
+    }
   }
 
   void _refreshWeather() {
     setState(() {
-      _city = CityStore.getCity();
       _weatherFuture = WeatherService.fetchByCity(_city);
     });
   }
@@ -39,11 +57,17 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       MaterialPageRoute(builder: (_) => const CitySelectorScreen()),
     );
-    if (chosen != null) _refreshWeather();
+
+    // After returning, re-fetch Firestore city + refresh weather
+    if (chosen != null) {
+      await _initCityAndWeather();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final wf = _weatherFuture;
+
     return SafeArea(
       child: RefreshIndicator(
         onRefresh: () async => _refreshWeather(),
@@ -53,19 +77,25 @@ class _HomeScreenState extends State<HomeScreen> {
             _heroHeader(),
             const SizedBox(height: 16),
 
-            FutureBuilder<WeatherInfo>(
-              future: _weatherFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return _loadingWeatherCard();
-                }
-                if (snapshot.hasError) {
-                  return _errorWeatherCard(snapshot.error.toString());
-                }
-                final w = snapshot.data!;
-                return _weatherCard(w);
-              },
-            ),
+            if (wf == null)
+              _loadingWeatherCard()
+            else
+              FutureBuilder<WeatherInfo>(
+                future: wf,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return _loadingWeatherCard();
+                  }
+                  if (snapshot.hasError) {
+                    return _errorWeatherCard(snapshot.error.toString());
+                  }
+                  if (!snapshot.hasData) {
+                    return _errorWeatherCard('No weather data returned.');
+                  }
+                  final w = snapshot.data!;
+                  return _weatherCard(w);
+                },
+              ),
 
             const SizedBox(height: 10),
             _weatherActionsRow(),
@@ -384,9 +414,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   IconData _conditionIcon(String condition) {
     final lower = condition.toLowerCase();
-    if (lower.contains('clear') || lower.contains('sun')) return Icons.wb_sunny_rounded;
+    if (lower.contains('clear') || lower.contains('sun')) {
+      return Icons.wb_sunny_rounded;
+    }
     if (lower.contains('cloud')) return Icons.cloud_rounded;
-    if (lower.contains('rain') || lower.contains('drizzle')) return Icons.beach_access_rounded;
+    if (lower.contains('rain') || lower.contains('drizzle')) {
+      return Icons.beach_access_rounded;
+    }
     if (lower.contains('thunder')) return Icons.flash_on_rounded;
     return Icons.cloud_outlined;
   }
@@ -435,26 +469,41 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _primaryCta(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primaryGreen,
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+    Widget _primaryCta(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () {
+        // Navigator.push(
+        //   context,
+        //   MaterialPageRoute(
+        //     builder: (_) => const SuggestionContextScreen(),
+        //   ),
+        // );
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: AppColors.primaryGreen,
+          borderRadius: BorderRadius.circular(14),
         ),
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const SuggestionContextScreen()),
-          );
-        },
-        icon: const Icon(Icons.auto_awesome_outlined),
-        label: const Text('Get Personalized Suggestion'),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.auto_awesome_outlined, color: Colors.white),
+            SizedBox(width: 8),
+            Text(
+              'Get Personalized Suggestion',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+
 }
