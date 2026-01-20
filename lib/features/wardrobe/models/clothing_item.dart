@@ -75,7 +75,10 @@ class ClothingItem {
       id: doc.id,
       name: (data['name'] ?? '').toString(),
       category: (data['category'] ?? '').toString(),
-      warmthLevel: (data['warmthLevel'] ?? '').toString(),
+      warmthLevel: (() {
+        final v = (data['warmthLevel'] ?? '').toString();
+        return v.toLowerCase() == 'warm' ? 'Heavy' : v;
+      })(),
       imageUrl: (data['imageUrl'] == null) ? null : data['imageUrl'].toString(),
       imagePath: (data['imagePath'] == null) ? null : data['imagePath'].toString(),
       createdAt: _tsToDate(data['createdAt']),

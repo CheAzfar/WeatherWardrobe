@@ -18,22 +18,25 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   final categories = const ['All', 'Tops', 'Bottoms', 'Outerwear', 'Shoes'];
 
   Stream<QuerySnapshot<Map<String, dynamic>>> _stream() {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return const Stream.empty();
+  final uid = FirebaseAuth.instance.currentUser?.uid;
+  if (uid == null) return const Stream.empty();
 
-    Query<Map<String, dynamic>> q = FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .collection('wardrobe_items')
-        // ✅ Use createdAt as a stable universal sort field
-        .orderBy('createdAt', descending: true);
+  Query<Map<String, dynamic>> q = FirebaseFirestore.instance
+      .collection('users')
+      .doc(uid)
+      .collection('wardrobe_items');
 
-    if (selectedCategory != 'All') {
-      q = q.where('category', isEqualTo: selectedCategory);
-    }
-
-    return q.snapshots();
+  // If "All", we can order directly (no composite index needed)
+  if (selectedCategory == 'All') {
+    q = q.orderBy('createdAt', descending: true);
+  } else {
+    // If filtered by category, DO NOT orderBy to avoid composite index
+    q = q.where('category', isEqualTo: selectedCategory);
   }
+
+  return q.snapshots();
+}
+
 
   @override
   Widget build(BuildContext context) {
@@ -77,7 +80,21 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                       );
                     }
 
-                    final docs = snap.data?.docs ?? [];
+                    final docs = (snap.data?.docs ?? []).toList();
+                    
+                    if (selectedCategory != 'All') {
+                      // Sort locally by createdAt descending (handles null safely)
+                      docs.sort((a, b) {
+                        final at = a.data()['createdAt'];
+                        final bt = b.data()['createdAt'];
+
+                        final aTime = (at is Timestamp) ? at.toDate() : DateTime.fromMillisecondsSinceEpoch(0);
+                        final bTime = (bt is Timestamp) ? bt.toDate() : DateTime.fromMillisecondsSinceEpoch(0);
+
+                        return bTime.compareTo(aTime);
+                      });
+                    }
+
                     if (docs.isEmpty) return _empty();
 
                     return GridView.builder(

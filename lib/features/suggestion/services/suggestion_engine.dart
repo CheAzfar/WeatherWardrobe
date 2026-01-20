@@ -5,70 +5,80 @@ import '../../wardrobe/models/clothing_item.dart';
 import '../models/outfit_suggestion.dart';
 
 class SuggestionEngine {
-  /// Firestore-based generator (Hive removed).
-  ///
-  /// Reads wardrobe from:
-  /// users/{uid}/wardrobe_items
   static Future<OutfitSuggestion> generate({
     required double temperature,
     required bool isRaining,
     required String context,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
+
+    // If user not signed in
     if (user == null) {
-      return OutfitSuggestion(
-        selectedItems: const <ClothingItem>[],
-        missingCategories: const <String>['Tops', 'Bottoms', 'Shoes'],
+      return const OutfitSuggestion(
+        recommendedByCategory: {},
+        missingNeeds: [
+          MissingNeed(category: 'Tops', warmthLevel: 'Medium'),
+          MissingNeed(category: 'Bottoms', warmthLevel: 'Medium'),
+          MissingNeed(category: 'Shoes', warmthLevel: 'Medium'),
+        ],
+        selectedItems: [],
+        missingCategories: ['Tops', 'Bottoms', 'Shoes'],
         reason: 'Please sign in to generate outfit suggestions.',
       );
     }
 
     final items = await _loadWardrobeItems(user.uid);
 
-    final requiredWarmth = _requiredWarmthFromTemp(temperature);
+    // Warmth target
+    final baseWarmth = _baseWarmthFromTemp(temperature);      // 0..2
+    final delta = _contextWarmthDelta(context);               // -1..+1
+    final desiredWarmth = _clampWarmth(baseWarmth + delta);   // 0..2
+    final desiredLabel = _warmthLabel(desiredWarmth);
 
-    final selectedItems = <ClothingItem>[];
-    final missingCategories = <String>[];
+    // Required categories
+    final required = <String>['Tops', 'Bottoms', 'Shoes'];
+    final wantsOuterwear =
+        isRaining || _contextNeedsOuterwear(context) || desiredWarmth >= 2;
+    if (wantsOuterwear) required.add('Outerwear');
 
-    // Base required categories
-    final requiredCategories = <String>['Tops', 'Bottoms', 'Shoes'];
+    // Build candidates map
+    final Map<String, List<ClothingItem>> recommendedByCategory = {};
+    final List<MissingNeed> missingNeeds = [];
+    final List<String> missingCategories = [];
+    final List<ClothingItem> selectedOnePerCategory = [];
 
-    if (context == 'Office') {
-      requiredCategories.add('Outerwear');
-    }
+    for (final cat in required) {
+      final ranked = _rankForCategory(
+        items: items,
+        category: cat,
+        desiredWarmth: desiredWarmth,
+        isRaining: isRaining,
+        context: context,
+      );
 
-    // Pick 1 item per required category
-    for (final category in requiredCategories) {
-      final matches = items.where((i) {
-        if (i.category != category) return false;
+      recommendedByCategory[cat] = ranked;
 
-        // Match warmth (also tolerate old values like "Heavy" vs "Warm")
-        final itemWarmth = _normalizeWarmth(i.warmthLevel);
-        final needWarmth = _normalizeWarmth(requiredWarmth);
-        return itemWarmth == needWarmth;
-      }).toList();
-
-      if (matches.isNotEmpty) {
-        selectedItems.add(matches.first);
+      if (ranked.isEmpty) {
+        missingNeeds.add(MissingNeed(category: cat, warmthLevel: desiredLabel));
+        missingCategories.add(cat);
       } else {
-        missingCategories.add(category);
+        // default pick = best first item
+        selectedOnePerCategory.add(ranked.first);
       }
     }
 
-    // If raining and Outerwear not already required, try to add it.
-    if (isRaining && !requiredCategories.contains('Outerwear')) {
-      final rainOuter = items.where((i) => i.category == 'Outerwear').toList();
-      if (rainOuter.isNotEmpty) {
-        selectedItems.add(rainOuter.first);
-      } else {
-        missingCategories.add('Outerwear');
-      }
-    }
+    final ctxShort = context.trim().isEmpty ? 'selected' : context;
+    final rainText =
+        isRaining ? 'Rain expected—outerwear is recommended.' : 'No rain expected.';
 
     return OutfitSuggestion(
-      selectedItems: selectedItems,
+      recommendedByCategory: recommendedByCategory,
+      missingNeeds: missingNeeds,
+      selectedItems: selectedOnePerCategory,
       missingCategories: missingCategories,
-      reason: 'Based on ${temperature.toInt()}°C weather and $context context',
+      reason:
+          'Based on ${temperature.toInt()}°C (${_tempBandText(temperature)}), context: $ctxShort. '
+          'Target warmth: $desiredLabel. $rainText',
     );
   }
 
@@ -82,18 +92,88 @@ class SuggestionEngine {
     return snap.docs.map((d) => ClothingItem.fromDoc(d)).toList();
   }
 
-  static String _requiredWarmthFromTemp(double temperature) {
-    // Keep your original thresholds
-    if (temperature >= 30) return 'Light';
-    if (temperature >= 24) return 'Medium';
-    return 'Heavy';
+  // Warmth scale: 0 Light, 1 Medium, 2 Heavy
+  static int _baseWarmthFromTemp(double t) {
+    if (t >= 30) return 0;
+    if (t >= 24) return 1;
+    return 2;
   }
 
-  static String _normalizeWarmth(String warmth) {
+  static int _contextWarmthDelta(String context) {
+    final c = context.toLowerCase();
+    if (c.contains('air-conditioned') || c.contains('air conditioned') || c.contains('office')) return 1;
+    if (c.contains('client')) return 1;
+    if (c.contains('outdoor')) return -1;
+    if (c.contains('casual')) return -1;
+    return 0;
+  }
+
+  static bool _contextNeedsOuterwear(String context) {
+    final c = context.toLowerCase();
+    return c.contains('air-conditioned') ||
+        c.contains('air conditioned') ||
+        c.contains('office') ||
+        c.contains('client');
+  }
+
+  static int _clampWarmth(int w) => w < 0 ? 0 : (w > 2 ? 2 : w);
+
+  static String _warmthLabel(int w) => w == 2 ? 'Heavy' : (w == 1 ? 'Medium' : 'Light');
+
+  static int _parseWarmthScale(String warmth) {
     final w = warmth.trim().toLowerCase();
-    if (w == 'heavy') return 'warm';   // tolerate old label
-    if (w == 'warm') return 'warm';
-    if (w == 'medium') return 'medium';
-    return 'light';
+    if (w == 'heavy') return 2;
+    if (w == 'warm') return 2; // backward compatibility
+    if (w == 'medium') return 1;
+    return 0;
+  }
+
+  static String _tempBandText(double t) {
+    if (t >= 30) return 'hot';
+    if (t >= 24) return 'warm';
+    return 'cool';
+  }
+
+  static List<ClothingItem> _rankForCategory({
+    required List<ClothingItem> items,
+    required String category,
+    required int desiredWarmth,
+    required bool isRaining,
+    required String context,
+  }) {
+    final candidates = items.where((i) => i.category == category).toList();
+    if (candidates.isEmpty) return [];
+
+    candidates.sort((a, b) {
+      final sa = _scoreItem(a, desiredWarmth, category, isRaining, context);
+      final sb = _scoreItem(b, desiredWarmth, category, isRaining, context);
+      if (sa != sb) return sa.compareTo(sb);
+
+      final ad = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bd = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bd.compareTo(ad);
+    });
+
+    return candidates;
+  }
+
+  static int _scoreItem(
+    ClothingItem item,
+    int desiredWarmth,
+    String category,
+    bool isRaining,
+    String context,
+  ) {
+    final itemWarmth = _parseWarmthScale(item.warmthLevel);
+    int score = (itemWarmth - desiredWarmth).abs();
+
+    final c = context.toLowerCase();
+
+    if (isRaining && category == 'Outerwear' && itemWarmth == 0) score += 2;
+    if ((c.contains('outdoor') || c.contains('casual')) && itemWarmth == 2) score += 1;
+    if ((c.contains('air-conditioned') || c.contains('air conditioned') || c.contains('client') || c.contains('office')) &&
+        itemWarmth == 0) score += 1;
+
+    return score;
   }
 }

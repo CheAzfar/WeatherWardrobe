@@ -28,7 +28,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   bool _saving = false;
 
   final List<String> _categories = const ['Tops', 'Bottoms', 'Outerwear', 'Shoes'];
-  final List<String> _warmthLevels = const ['Light', 'Medium', 'Warm'];
+  final List<String> _warmthLevels = const ['Light', 'Medium', 'Heavy'];
 
   @override
   void dispose() {

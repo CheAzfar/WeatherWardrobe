@@ -8,54 +8,69 @@ import '../../settings/services/city_store.dart';
 import '../../weather/models/weather_info.dart';
 import '../../weather/services/weather_service.dart';
 
-import '../models/outfit_suggestion.dart';
-import '../services/suggestion_engine.dart';
-import '../../wardrobe/models/clothing_item.dart';
+import 'suggestion_result_screen.dart';
 
-class SuggestionResultScreen extends StatefulWidget {
-  final String contextType;
-
-  const SuggestionResultScreen({
-    super.key,
-    required this.contextType,
-  });
+/// Step 1/2: Pick the situation/context ("Where are you going?")
+/// Then navigate to [SuggestionResultScreen] with weather + selected context.
+class SuggestionContextScreen extends StatefulWidget {
+  const SuggestionContextScreen({super.key});
 
   @override
-  State<SuggestionResultScreen> createState() => _SuggestionResultScreenState();
+  State<SuggestionContextScreen> createState() => _SuggestionContextScreenState();
 }
 
-class _SuggestionResultScreenState extends State<SuggestionResultScreen> {
+class _SuggestionContextScreenState extends State<SuggestionContextScreen> {
   String _city = CityStore.defaultCity;
-
-  // FIX: make nullable (no late)
   Future<WeatherInfo>? _weatherFuture;
+
+  // Default selection (matches your screenshot style)
+  String _selectedContext = 'Air-Conditioned Office';
+
+  final List<_ContextOption> _options = const [
+    _ContextOption(
+      title: 'Air-Conditioned Office',
+      subtitle: 'Cold indoor (18–20°C)',
+      icon: Icons.ac_unit_rounded,
+    ),
+    _ContextOption(
+      title: 'Outdoor Activities',
+      subtitle: 'Full sun exposure',
+      icon: Icons.wb_sunny_rounded,
+    ),
+    _ContextOption(
+      title: 'Mixed Indoor/Outdoor',
+      subtitle: 'Frequent transitions',
+      icon: Icons.swap_horiz_rounded,
+    ),
+    _ContextOption(
+      title: 'Client Meeting',
+      subtitle: 'Professional setting',
+      icon: Icons.business_center_rounded,
+    ),
+    _ContextOption(
+      title: 'Casual Day Out',
+      subtitle: 'Relaxed environment',
+      icon: Icons.emoji_emotions_rounded,
+    ),
+  ];
 
   @override
   void initState() {
     super.initState();
-
-    // Set an initial future immediately so the screen can build safely
     _weatherFuture = WeatherService.fetchByCity(_city);
-
-    // Then fetch the saved city (Firestore) and refresh weather
     _initCityAndWeather();
   }
 
   Future<void> _initCityAndWeather() async {
     try {
-      final c = await CityStore.fetchCity(); // Firestore-based
+      final c = await CityStore.fetchCity();
       if (!mounted) return;
-
       setState(() {
         _city = c;
         _weatherFuture = WeatherService.fetchByCity(_city);
       });
-    } catch (e) {
-      // If Firestore city fetch fails, we still keep default city weather future
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load saved city. Using default. ($e)')),
-      );
+    } catch (_) {
+      // Keep default city
     }
   }
 
@@ -71,43 +86,33 @@ class _SuggestionResultScreenState extends State<SuggestionResultScreen> {
       MaterialPageRoute(builder: (_) => const CitySelectorScreen()),
     );
 
-    // After returning, re-fetch Firestore city + refresh weather.
     if (chosen != null) {
-      try {
-        final c = await CityStore.fetchCity();
-        if (!mounted) return;
-
-        setState(() {
-          _city = c;
-          _weatherFuture = WeatherService.fetchByCity(_city);
-        });
-
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('City updated to $_city')),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update city: $e')),
-        );
-      }
+      await _initCityAndWeather();
     }
+  }
+
+  void _goToResult(WeatherInfo weather) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SuggestionResultScreen(
+          weather: weather,
+          contextType: _selectedContext,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // FIX: handle null future safely
     final wf = _weatherFuture;
     if (wf == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Outfit Suggestion'),
+        title: const Text('Suggestion'),
         actions: [
           IconButton(
             tooltip: 'Change city',
@@ -123,150 +128,84 @@ class _SuggestionResultScreenState extends State<SuggestionResultScreen> {
       ),
       body: FutureBuilder<WeatherInfo>(
         future: wf,
-        builder: (context, wSnap) {
-          if (wSnap.connectionState == ConnectionState.waiting) {
+        builder: (context, snap) {
+          if (snap.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (wSnap.hasError) {
-            return _errorState('Weather error: ${wSnap.error}');
+          if (snap.hasError) {
+            return _errorState('Weather error: ${snap.error}');
           }
-          if (!wSnap.hasData) {
+          if (!snap.hasData) {
             return _errorState('Weather error: No data returned.');
           }
 
-          final weather = wSnap.data!;
+          final weather = snap.data!;
 
-          return FutureBuilder<OutfitSuggestion>(
-            future: SuggestionEngine.generate(
-              temperature: weather.tempC,
-              isRaining: weather.isRaining,
-              context: widget.contextType,
-            ),
-            builder: (context, sSnap) {
-              if (sSnap.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              if (sSnap.hasError) {
-                return _errorState('Suggestion error: ${sSnap.error}');
-              }
-              if (!sSnap.hasData) {
-                return _errorState('Suggestion error: No data returned.');
-              }
-
-              final suggestion = sSnap.data!;
-              return _content(weather, suggestion);
-            },
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+            children: [
+              const Text(
+                'Where are you going?',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Help us suggest the perfect outfit',
+                style: TextStyle(
+                  color: AppColors.textMuted,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 14),
+              _weatherCard(weather),
+              const SizedBox(height: 14),
+              ..._options.map(_contextTile),
+              const SizedBox(height: 18),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: () => _goToResult(weather),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryGreen,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  child: const Text(
+                    'Get Personalized Suggestion',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+            ],
           );
         },
       ),
     );
   }
 
-  Widget _content(WeatherInfo w, OutfitSuggestion s) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
-      children: [
-        _heroHeader(city: w.city, contextType: widget.contextType),
-        const SizedBox(height: 12),
-        _weatherSummary(w),
-        const SizedBox(height: 12),
-        _reasonCard(s.reason),
-        const SizedBox(height: 16),
-        _sectionTitle('Recommended Outfit'),
-        const SizedBox(height: 10),
-
-        if (s.selectedItems.isEmpty)
-          const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: Text('No suitable items found. Try adding more wardrobe items.'),
-          )
-        else
-          _itemsGrid(s.selectedItems),
-
-        if (s.missingCategories.isNotEmpty) ...[
-          const SizedBox(height: 18),
-          _sectionTitle('Missing Items'),
-          const SizedBox(height: 6),
-          const Text(
-            'Add these categories to improve future recommendations.',
-            style: TextStyle(color: AppColors.textMuted),
-          ),
-          const SizedBox(height: 10),
-          ...s.missingCategories.map(
-            (c) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _missingCard(category: c),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _heroHeader({required String city, required String contextType}) {
+  Widget _weatherCard(WeatherInfo w) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
-          colors: [
-            AppColors.primaryGreen.withValues(alpha: 0.95),
-            AppColors.primaryGreen.withValues(alpha: 0.55),
-          ],
-        ),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.auto_awesome, color: Colors.white),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Context: $contextType',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'City: $city',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _weatherSummary(WeatherInfo w) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(18),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
         children: [
+          Icon(_conditionIcon(w.condition), size: 34, color: AppColors.primaryGreen),
+          const SizedBox(height: 6),
           Text(
-            '${w.tempC.toStringAsFixed(1)}°C • ${w.condition}',
-            style: const TextStyle(fontWeight: FontWeight.w900),
+            '${w.tempC.toStringAsFixed(0)}°C',
+            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900),
           ),
           Text(
-            w.isRaining ? 'Raining' : 'Not raining',
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-              color: w.isRaining ? Colors.blue : AppColors.textMuted,
+            w.condition,
+            style: const TextStyle(
+              color: AppColors.textMuted,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -274,135 +213,41 @@ class _SuggestionResultScreenState extends State<SuggestionResultScreen> {
     );
   }
 
-  Widget _reasonCard(String reason) {
+  Widget _contextTile(_ContextOption o) {
+    final selected = _selectedContext == o.title;
     return Container(
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: AppColors.softGreen.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Text(
-        reason,
-        style: const TextStyle(fontWeight: FontWeight.w800),
-      ),
-    );
-  }
-
-  Widget _sectionTitle(String t) {
-    return Text(
-      t,
-      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-    );
-  }
-
-  Widget _itemsGrid(List<ClothingItem> items) {
-    return GridView.builder(
-      itemCount: items.length,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        childAspectRatio: 0.78,
-      ),
-      itemBuilder: (context, i) {
-        final item = items[i];
-        final url = item.imageUrl ?? '';
-
-        return Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(18)),
-                  child: url.isEmpty
-                      ? Container(
-                          color: AppColors.softGreen.withValues(alpha: 0.6),
-                          child: const Center(
-                            child: Icon(
-                              Icons.image_outlined,
-                              color: AppColors.primaryGreen,
-                              size: 36,
-                            ),
-                          ),
-                        )
-                      : Image.network(
-                          url,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          errorBuilder: (_, __, ___) => Container(
-                            color: AppColors.softGreen.withValues(alpha: 0.6),
-                            child: const Center(
-                              child: Icon(
-                                Icons.broken_image_outlined,
-                                color: AppColors.primaryGreen,
-                                size: 36,
-                              ),
-                            ),
-                          ),
-                        ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${item.category} • ${item.warmthLevel}',
-                      style: const TextStyle(
-                        color: AppColors.textMuted,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _missingCard({required String category}) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.orange.shade50,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.orange),
+        border: Border.all(color: selected ? AppColors.primaryGreen : AppColors.border),
+        color: selected ? AppColors.softGreen.withValues(alpha: 0.35) : Colors.white,
       ),
-      child: Row(
-        children: [
-          const Icon(Icons.warning_amber_rounded, color: Colors.orange),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              category,
-              style: const TextStyle(fontWeight: FontWeight.w900),
-            ),
-          ),
-        ],
+      child: ListTile(
+        leading: Icon(o.icon, color: selected ? AppColors.primaryGreen : AppColors.textMuted),
+        title: Text(o.title, style: const TextStyle(fontWeight: FontWeight.w900)),
+        subtitle: Text(
+          o.subtitle,
+          style: const TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w700),
+        ),
+        trailing: selected
+            ? const Icon(Icons.check_circle, color: AppColors.primaryGreen)
+            : const Icon(Icons.radio_button_unchecked, color: AppColors.border),
+        onTap: () => setState(() => _selectedContext = o.title),
       ),
     );
+  }
+
+  IconData _conditionIcon(String condition) {
+    final lower = condition.toLowerCase();
+    if (lower.contains('clear') || lower.contains('sun')) {
+      return Icons.wb_sunny_rounded;
+    }
+    if (lower.contains('cloud')) return Icons.cloud_rounded;
+    if (lower.contains('rain') || lower.contains('drizzle')) {
+      return Icons.beach_access_rounded;
+    }
+    if (lower.contains('thunder')) return Icons.flash_on_rounded;
+    return Icons.cloud_outlined;
   }
 
   Widget _errorState(String msg) {
@@ -425,4 +270,11 @@ class _SuggestionResultScreenState extends State<SuggestionResultScreen> {
       ),
     );
   }
+}
+
+class _ContextOption {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  const _ContextOption({required this.title, required this.subtitle, required this.icon});
 }

@@ -28,13 +28,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   double get _fee => widget.subtotalAmount * 0.05;
   double get _finalTotal => widget.subtotalAmount + _fee;
 
-  /// IMPORTANT:
-  /// Stripe PaymentIntent must be created on a backend (Cloud Function / server).
-  /// Put your endpoint here when ready.
-  ///
-  /// Expected response JSON:
-  /// { "clientSecret": "...", "paymentIntentId": "pi_..." }
-  static const String stripeBackendUrl = 'https://createpaymentintent-g3f5ehvnnq-uc.a.run.app';
+  static const String stripeBackendUrl =
+      'https://createpaymentintent-g3f5ehvnnq-uc.a.run.app';
 
   Future<String?> _payWithStripe() async {
     if (stripeBackendUrl.trim().isEmpty) return null;
@@ -43,7 +38,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       Uri.parse(stripeBackendUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'amount': (_finalTotal * 100).round(), // cents
+        'amount': (_finalTotal * 100).round(),
         'currency': 'myr',
       }),
     );
@@ -57,7 +52,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final paymentIntentId = (data['paymentIntentId'] ?? '').toString();
 
     if (clientSecret.isEmpty || paymentIntentId.isEmpty) {
-      throw Exception('Invalid Stripe backend response (missing clientSecret/paymentIntentId)');
+      throw Exception(
+          'Invalid Stripe backend response (missing clientSecret/paymentIntentId)');
     }
 
     await Stripe.instance.initPaymentSheet(
@@ -77,19 +73,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     setState(() => _processing = true);
 
     try {
-      // 1) Try Stripe (if backend configured)
       String paymentRef;
       final stripeIntentId = await _payWithStripe();
 
       if (stripeIntentId != null) {
         paymentRef = stripeIntentId;
       } else {
-        // 2) Fallback: dev/test payment to keep app usable before backend is ready
         await Future.delayed(const Duration(seconds: 1));
         paymentRef = 'test_${DateTime.now().millisecondsSinceEpoch}';
       }
 
-      // 3) Create order in Firestore + move items into Wardrobe (handled in MarketplaceService)
       final orderId = await MarketplaceService.createOrder(
         items: widget.cartItems,
         subtotalAmount: widget.subtotalAmount,
@@ -100,12 +93,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
       if (orderId == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Order creation failed. Please try again.')),
+          const SnackBar(
+              content: Text('Order creation failed. Please try again.')),
         );
         return;
       }
 
-      // 4) Success UI
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
@@ -132,7 +125,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           actions: [
             ElevatedButton(
               onPressed: () => Navigator.pop(context),
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryGreen),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryGreen,
+              ),
               child: const Text('Done'),
             ),
           ],
@@ -140,8 +135,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       );
 
       if (!mounted) return;
-
-      // Pop Checkout -> Cart -> Shop (or wherever you came from)
       Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
@@ -185,7 +178,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         ),
                       ),
                       title: Text(
-                        item.name,
+                        item.title, // FIXED (was item.name)
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontWeight: FontWeight.w900),
@@ -223,17 +216,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   backgroundColor: AppColors.primaryGreen,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
                 ),
                 child: _processing
                     ? const SizedBox(
                         height: 20,
                         width: 20,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2),
                       )
                     : Text(
                         'Pay RM ${_finalTotal.toStringAsFixed(2)}',
-                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w900, fontSize: 16),
                       ),
               ),
             ),
