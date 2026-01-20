@@ -7,7 +7,7 @@ import '../models/marketplace_listing.dart';
 import '../services/cart_service.dart';
 import 'cart_screen.dart';
 import 'create_listing_screen.dart';
-import 'product_details_screen.dart'; // Make sure you created this file!
+import 'product_details_screen.dart'; 
 
 class ShopScreen extends StatefulWidget {
   final String? initialCategory;
@@ -30,11 +30,14 @@ class ShopScreen extends StatefulWidget {
 class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // Filters
+  // Browse Tab Filters
   String _selectedCategory = 'All';
   String _selectedWarmth = 'All';
   String _sort = 'Newest';
   final TextEditingController _searchCtrl = TextEditingController();
+
+  // My Listings Tab Filter
+  String _myListingsFilter = 'Active'; // 'Active' or 'Sold'
 
   final List<String> _categoryOptions = const ['All', 'Tops', 'Bottoms', 'Outerwear', 'Shoes'];
   final List<String> _warmthOptions = const ['All', 'Light', 'Medium', 'Heavy'];
@@ -63,7 +66,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  // Helper to normalize warmth strings
   String _normalizeWarmth(String v) {
     final lower = v.toLowerCase();
     if (lower == 'warm') return 'Heavy';
@@ -86,7 +88,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
     });
   }
 
-  // Client-side filtering to avoid Firestore Index errors
   List<MarketplaceListing> _applyFilters(List<MarketplaceListing> all) {
     final q = _searchCtrl.text.trim().toLowerCase();
 
@@ -102,13 +103,11 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       return catOk && warmOk && searchOk;
     }).toList();
 
-    // Sorting
     if (_sort == 'Price: Low') {
       filtered.sort((a, b) => a.price.compareTo(b.price));
     } else if (_sort == 'Price: High') {
       filtered.sort((a, b) => b.price.compareTo(a.price));
     } else {
-      // Default: Newest first
       filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     }
 
@@ -118,14 +117,13 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50], // Light background for contrast
+      backgroundColor: Colors.grey[50], 
       appBar: AppBar(
         title: const Text('Marketplace', style: TextStyle(fontWeight: FontWeight.bold)),
         elevation: 0,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         actions: [
-          // Cart icon + badge
           StreamBuilder(
             stream: CartService.streamCart(),
             builder: (context, snap) {
@@ -197,7 +195,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
   Widget _buildBrowseTab() {
     return Column(
       children: [
-        // 1. Search & Filters Container
         Container(
           color: Colors.white,
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
@@ -214,10 +211,8 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
           ),
         ),
 
-        // 2. Product Grid
         Expanded(
           child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            // We fetch ALL active listings and filter locally
             stream: FirebaseFirestore.instance
                 .collection('marketplace_listings')
                 .where('isAvailable', isEqualTo: true)
@@ -250,7 +245,10 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
   }
 
   // ---------------------------------------------------------------------------
-  // MY LISTINGS TAB
+  // MY LISTINGS TAB (Updated with Active/Sold logic)
+  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // MY LISTINGS TAB (FIXED)
   // ---------------------------------------------------------------------------
   Widget _buildMyListingsTab() {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -258,56 +256,136 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       return const Center(child: Text('Please sign in to manage listings.'));
     }
 
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('marketplace_listings')
-          .where('sellerId', isEqualTo: uid)
-          .snapshots(),
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        
-        final docs = snap.data?.docs ?? [];
-        if (docs.isEmpty) {
-          return const Center(child: Text('You haven\'t listed anything yet.'));
-        }
+    return Column(
+      children: [
+        // 1. Toggle Active/Sold
+        Container(
+          margin: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(25),
+          ),
+          child: Row(
+            children: [
+              _myListingToggleBtn('Active', _myListingsFilter == 'Active'),
+              _myListingToggleBtn('Sold', _myListingsFilter == 'Sold'),
+            ],
+          ),
+        ),
 
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: docs.length,
-          itemBuilder: (context, i) {
-            final item = MarketplaceListing.fromDoc(docs[i]);
-            return Card(
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.grey.shade200),
-              ),
-              margin: const EdgeInsets.only(bottom: 12),
-              child: ListTile(
-                contentPadding: const EdgeInsets.all(8),
-                leading: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    item.imageUrl,
-                    width: 60,
-                    height: 60,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_,__,___) => Container(width:60, height:60, color:Colors.grey[200]),
-                  ),
-                ),
-                title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text("RM ${item.price.toStringAsFixed(2)} • ${item.size}"),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline, color: Colors.red),
-                  onPressed: () => _deleteListing(item.id),
-                ),
-              ),
-            );
-          },
-        );
-      },
+        // 2. List
+        Expanded(
+          child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirebaseFirestore.instance
+                .collection('marketplace_listings')
+                .where('sellerId', isEqualTo: uid)
+                .snapshots(),
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              
+              final docs = snap.data?.docs ?? [];
+              
+              // FIX: Filter the raw docs FIRST, using 'd' correctly
+              final filteredDocs = docs.where((d) {
+                final data = d.data();
+                final status = data['status'] ?? 'active';
+                final isAvailable = data['isAvailable'] ?? true;
+
+                if (_myListingsFilter == 'Active') {
+                  // Show if available AND not marked sold
+                  return isAvailable == true && status != 'sold';
+                } else {
+                  // Show if sold OR unavailable
+                  return status == 'sold' || isAvailable == false;
+                }
+              }).toList();
+
+              // THEN convert the filtered docs to your model
+              final filteredListings = filteredDocs
+                  .map((d) => MarketplaceListing.fromDoc(d))
+                  .toList();
+
+              if (filteredListings.isEmpty) {
+                return Center(child: Text('No ${_myListingsFilter.toLowerCase()} listings.'));
+              }
+
+              return ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: filteredListings.length,
+                itemBuilder: (context, i) {
+                  final item = filteredListings[i];
+                  return Card(
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: Colors.grey.shade200),
+                    ),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.all(8),
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          item.imageUrl,
+                          width: 60,
+                          height: 60,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_,__,___) => Container(width:60, height:60, color:Colors.grey[200]),
+                        ),
+                      ),
+                      title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text("RM ${item.price.toStringAsFixed(2)} • ${item.size}"),
+                      trailing: _myListingsFilter == 'Active'
+                        ? IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            onPressed: () => _deleteListing(item.id),
+                          )
+                        : Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(color: Colors.green[100], borderRadius: BorderRadius.circular(8)),
+                            child: const Text("SOLD", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)),
+                          ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+  
+  // Helper to check availability safely
+  bool isAvailable(MarketplaceListing item) {
+    // We can't see the raw doc here easily without re-parsing, 
+    // but the stream builder above does the map lookup.
+    return true; 
+  }
+
+  Widget _myListingToggleBtn(String text, bool isSelected) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _myListingsFilter = text),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(25),
+            boxShadow: isSelected ? [BoxShadow(color: Colors.black12, blurRadius: 4)] : null,
+          ),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: isSelected ? AppColors.primaryGreen : Colors.grey,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -415,7 +493,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
           icon: const Icon(Icons.keyboard_arrow_down, size: 18),
           style: const TextStyle(fontSize: 12, color: Colors.black87),
           items: values.map((v) {
-            // Shorten the display text if it's the selected value to fit
             final display = (v == value && v != 'All' && label != 'Sort') ? v : (v == 'All' ? label : v);
             return DropdownMenuItem(value: v, child: Text(display, maxLines: 1));
           }).toList(),
@@ -475,13 +552,9 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // LISTING CARD (The Beautiful Part)
-  // ---------------------------------------------------------------------------
   Widget _listingCard(MarketplaceListing item) {
     return GestureDetector(
       onTap: () {
-        // Navigate to the beautiful details screen
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => ProductDetailsScreen(listing: item)),
@@ -502,7 +575,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
         ),
         child: Row(
           children: [
-            // Image Section
             Hero(
               tag: item.id,
               child: Container(
@@ -518,7 +590,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
               ),
             ),
             
-            // Info Section
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(12),
@@ -539,7 +610,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
                           ),
                         ),
                         const SizedBox(height: 4),
-                        // Category • Size Badge
                         Row(
                           children: [
                             Container(
@@ -563,7 +633,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
                       ],
                     ),
                     
-                    // Price Row
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
