@@ -36,26 +36,19 @@ class CartService {
     return _cartRef(user.uid).snapshots();
   }
 
-  static Future<void> updateQty({
-    required String listingId,
-    required int qty,
-  }) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) throw Exception('Not signed in');
+  static Future<void> removeFromCart({required String listingId}) async {
+  final uid = FirebaseAuth.instance.currentUser?.uid;
+  if (uid == null) return;
 
-    final ref = _cartRef(user.uid).doc(listingId);
-    if (qty <= 0) {
-      await ref.delete();
-    } else {
-      await ref.update({'qty': qty});
-    }
-  }
+  final ref = FirebaseFirestore.instance
+      .collection('users')
+      .doc(uid)
+      .collection('cart')
+      .doc(listingId);
 
-  static Future<void> removeItem(String listingId) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) throw Exception('Not signed in');
-    await _cartRef(user.uid).doc(listingId).delete();
-  }
+  await ref.delete();
+}
+
 
   static Future<void> clearCart() async {
     final user = FirebaseAuth.instance.currentUser;

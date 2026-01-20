@@ -6,12 +6,10 @@ import '../models/marketplace_listing.dart';
 import '../services/cart_service.dart';
 import 'checkout_screen.dart';
 
-
 class CartScreen extends StatelessWidget {
   const CartScreen({super.key});
 
   Stream<QuerySnapshot<Map<String, dynamic>>> _listingsStream() {
-    // Same collection as Shop
     return FirebaseFirestore.instance
         .collection('marketplace_listings')
         .orderBy('createdAt', descending: true)
@@ -36,7 +34,7 @@ class CartScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: StreamBuilder(
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: CartService.streamCart(),
         builder: (context, cartSnap) {
           if (cartSnap.connectionState == ConnectionState.waiting) {
@@ -45,20 +43,19 @@ class CartScreen extends StatelessWidget {
           if (cartSnap.hasError) {
             return Center(child: Text('Cart error: ${cartSnap.error}'));
           }
+
           final cartDocs = cartSnap.data?.docs ?? [];
           if (cartDocs.isEmpty) {
             return const Center(child: Text('Your cart is empty.'));
           }
 
-          final qtyByListing = <String, int>{};
-          for (final d in cartDocs) {
+          // Old behavior: 1 item = 1 listingId in cart
+          final cartIds = cartDocs.map((d) {
             final data = d.data();
-            final id = (data['listingId'] ?? d.id).toString();
-            final qty = (data['qty'] is num) ? (data['qty'] as num).toInt() : 1;
-            qtyByListing[id] = qty;
-          }
+            return (data['listingId'] ?? d.id).toString();
+          }).toSet();
 
-          return StreamBuilder(
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: _listingsStream(),
             builder: (context, listSnap) {
               if (listSnap.connectionState == ConnectionState.waiting) {
@@ -70,11 +67,45 @@ class CartScreen extends StatelessWidget {
 
               final listingDocs = listSnap.data?.docs ?? [];
               final listings = listingDocs.map(MarketplaceListing.fromDoc).toList();
-              final inCart = listings.where((l) => qtyByListing.containsKey(l.id)).toList();
+
+              final inCart = listings.where((l) => cartIds.contains(l.id)).toList();
+
+              // If listing got deleted / sold and no longer exists
+              if (inCart.isEmpty) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.info_outline, size: 44, color: AppColors.textMuted),
+                        const SizedBox(height: 10),
+                        const Text('Cart items are no longer available.',
+                            style: TextStyle(fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 10),
+                        ElevatedButton(
+                          onPressed: () async {
+                            await CartService.clearCart();
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Cart cleared')),
+                            );
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryGreen,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          ),
+                          child: const Text('Clear Cart'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
 
               double total = 0.0;
               for (final l in inCart) {
-                total += l.price * (qtyByListing[l.id] ?? 1);
+                total += l.price; // 1 each
               }
 
               return Column(
@@ -86,7 +117,6 @@ class CartScreen extends StatelessWidget {
                       separatorBuilder: (_, __) => const SizedBox(height: 12),
                       itemBuilder: (context, i) {
                         final item = inCart[i];
-                        final qty = qtyByListing[item.id] ?? 1;
 
                         return Container(
                           padding: const EdgeInsets.all(12),
@@ -103,35 +133,40 @@ class CartScreen extends StatelessWidget {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(item.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(fontWeight: FontWeight.w900)),
+                                    Text(
+                                      item.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontWeight: FontWeight.w900),
+                                    ),
                                     const SizedBox(height: 4),
-                                    Text('${item.category} • ${item.warmthLevel}',
-                                        style: const TextStyle(
-                                            color: AppColors.textMuted,
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 12)),
+                                    Text(
+                                      '${item.category} • ${item.warmthLevel}',
+                                      style: const TextStyle(
+                                        color: AppColors.textMuted,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 12,
+                                      ),
+                                    ),
                                     const SizedBox(height: 8),
-                                    Text('RM ${item.price.toStringAsFixed(2)}',
-                                        style: const TextStyle(fontWeight: FontWeight.w900)),
+                                    Text(
+                                      'RM ${item.price.toStringAsFixed(2)}',
+                                      style: const TextStyle(fontWeight: FontWeight.w900),
+                                    ),
                                   ],
                                 ),
                               ),
                               const SizedBox(width: 10),
-                              Column(
-                                children: [
-                                  IconButton(
-                                    onPressed: () => CartService.updateQty(listingId: item.id, qty: qty + 1),
-                                    icon: const Icon(Icons.add_circle_outline),
-                                  ),
-                                  Text('$qty', style: const TextStyle(fontWeight: FontWeight.w900)),
-                                  IconButton(
-                                    onPressed: () => CartService.updateQty(listingId: item.id, qty: qty - 1),
-                                    icon: const Icon(Icons.remove_circle_outline),
-                                  ),
-                                ],
+                              IconButton(
+                                tooltip: 'Remove',
+                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                onPressed: () async {
+                                  await CartService.removeFromCart(listingId: item.id);
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Removed from cart')),
+                                  );
+                                },
                               ),
                             ],
                           ),
@@ -171,7 +206,6 @@ class CartScreen extends StatelessWidget {
                           ),
                           child: const Text('Checkout'),
                         ),
-
                       ],
                     ),
                   ),
