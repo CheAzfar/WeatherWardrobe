@@ -21,7 +21,7 @@ class MarketplaceService {
   }
 
   // -------------------------
-  // 1) Create Listing
+  // 1) Create Listing (UPDATED)
   // -------------------------
   static Future<String?> createListing({
     required String name,
@@ -29,12 +29,14 @@ class MarketplaceService {
     required String warmthLevel,
     required double price,
     required String imageUrl,
+    // --- NEW PARAMS ADDED HERE ---
+    required String size,
+    required String description,
   }) async {
     final user = _auth.currentUser;
     if (user == null) return null;
 
     final doc = await _db.collection('marketplace_listings').add({
-      // Save both keys to avoid breaking any screen that uses either
       'title': name.trim(),
       'name': name.trim(),
 
@@ -43,9 +45,12 @@ class MarketplaceService {
       'price': price,
       'imageUrl': imageUrl,
 
+      // Save the new fields
+      'size': size,
+      'description': description.trim(),
+
       'sellerId': user.uid,
 
-      // ✅ Added: availability fields (so sold items can be hidden)
       'isAvailable': true,
       'status': 'active',
 
@@ -57,14 +62,8 @@ class MarketplaceService {
   }
 
   // -------------------------
-  // 2) Create Order
+  // 2) Create Order (Kept same as before)
   // -------------------------
-  /// Creates an order record under users/{uid}/orders/{orderId}
-  /// and writes the order items into users/{uid}/orders/{orderId}/items.
-  /// ✅ Restored behavior:
-  /// - Marks marketplace listing as sold/unavailable (so it disappears from browse)
-  /// - Adds item into buyer wardrobe
-  /// Clears cart after success.
   static Future<String?> createOrder({
     required List<MarketplaceListing> items,
     required double subtotalAmount,
@@ -102,21 +101,19 @@ class MarketplaceService {
         final itemRef = orderRef.collection('items').doc(it.id);
         batch.set(itemRef, {
           'listingId': it.id,
-
-          // Keep compatibility
           'title': it.title,
           'name': it.title,
-
           'category': it.category,
           'warmthLevel': _normalizeWarmth(it.warmthLevel),
           'price': it.price,
           'imageUrl': it.imageUrl,
           'sellerId': it.sellerId,
-
+          // Save size/desc if available in model
+          'size': it.size, 
           'createdAt': FieldValue.serverTimestamp(),
         });
 
-        // 2.2) Mark listing sold/unavailable so it disappears from browse
+        // 2.2) Mark listing sold
         final listingRef = _db.collection('marketplace_listings').doc(it.id);
         batch.update(listingRef, {
           'isAvailable': false,
@@ -126,11 +123,7 @@ class MarketplaceService {
           'updatedAt': FieldValue.serverTimestamp(),
         });
 
-        // 2.3) Add to buyer wardrobe (restore old behavior)
-        //
-        // IMPORTANT:
-        // If your wardrobe collection name is different, change ONLY this line:
-        // .collection('wardrobe_items')
+        // 2.3) Add to buyer wardrobe
         final wardrobeRef =
             _db.collection('users').doc(uid).collection('wardrobe_items').doc(it.id);
 
@@ -142,12 +135,9 @@ class MarketplaceService {
             'category': it.category,
             'warmthLevel': _normalizeWarmth(it.warmthLevel),
             'imageUrl': it.imageUrl,
-
-            // RESTORE PURCHASE BADGE SUPPORT
             'purchased': true,
             'isPurchased': true,
             'purchaseStatus': 'purchased',
-
             'source': 'marketplace',
             'listingId': it.id,
             'sellerId': it.sellerId,
@@ -155,7 +145,6 @@ class MarketplaceService {
           },
           SetOptions(merge: true),
         );
-
       }
 
       await batch.commit();

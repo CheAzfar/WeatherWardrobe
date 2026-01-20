@@ -3,12 +3,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class MarketplaceListing {
   final String id;
   final String title;
-  final String category;     // Tops / Bottoms / Outerwear / Shoes
-  final String warmthLevel;  // Light / Medium / Heavy
+  final String category;     
+  final String warmthLevel;  
   final double price;
   final String imageUrl;
   final String sellerId;
   final DateTime createdAt;
+  
+  // --- NEW FIELDS ---
+  final String size;
+  final String description;
 
   const MarketplaceListing({
     required this.id,
@@ -19,6 +23,8 @@ class MarketplaceListing {
     required this.imageUrl,
     required this.sellerId,
     required this.createdAt,
+    this.size = 'M', // Default
+    this.description = '',
   });
 
   static MarketplaceListing fromDoc(QueryDocumentSnapshot<Map<String, dynamic>> d) {
@@ -26,7 +32,7 @@ class MarketplaceListing {
 
     String normWarmth(String v) {
       final lower = v.trim().toLowerCase();
-      if (lower == 'warm') return 'Heavy'; // backward compatibility
+      if (lower == 'warm') return 'Heavy';
       if (lower == 'heavy') return 'Heavy';
       if (lower == 'medium') return 'Medium';
       if (lower == 'light') return 'Light';
@@ -52,6 +58,9 @@ class MarketplaceListing {
       imageUrl: (data['imageUrl'] ?? '').toString(),
       sellerId: (data['sellerId'] ?? '').toString(),
       createdAt: toDate(data['createdAt']),
+      // --- READ NEW FIELDS ---
+      size: (data['size'] ?? 'M').toString(),
+      description: (data['description'] ?? '').toString(),
     );
   }
 }

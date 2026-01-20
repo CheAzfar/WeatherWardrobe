@@ -5,8 +5,9 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../models/marketplace_listing.dart';
 import '../services/cart_service.dart';
-import 'create_listing_screen.dart';
 import 'cart_screen.dart';
+import 'create_listing_screen.dart';
+import 'product_details_screen.dart'; // Make sure you created this file!
 
 class ShopScreen extends StatefulWidget {
   final String? initialCategory;
@@ -48,10 +49,8 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       vsync: this,
       initialIndex: widget.initialTabIndex.clamp(0, 1),
     );
-    _tabController.addListener(() {
-      if (mounted) setState(() {}); // so FAB updates on tab change
-    });
-
+    
+    // Initialize filters if passed from Home Screen
     _selectedCategory = widget.initialCategory?.trim().isNotEmpty == true ? widget.initialCategory!.trim() : 'All';
     _selectedWarmth = widget.initialWarmth?.trim().isNotEmpty == true ? _normalizeWarmth(widget.initialWarmth!.trim()) : 'All';
     if (widget.initialQuery?.trim().isNotEmpty == true) _searchCtrl.text = widget.initialQuery!.trim();
@@ -64,26 +63,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  // Firestore stream (Browse)
-  Stream<QuerySnapshot<Map<String, dynamic>>> _browseStream() {
-  return FirebaseFirestore.instance
-      .collection('marketplace_listings')
-      .orderBy('createdAt', descending: true)
-      .snapshots();
-}
-
-
-  // My listings (avoid composite index by sorting locally)
-  Stream<QuerySnapshot<Map<String, dynamic>>> _myListingsStream() {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return const Stream.empty();
-    return FirebaseFirestore.instance
-        .collection('marketplace_listings')
-        .where('isAvailable', isEqualTo: true)
-        .where('sellerId', isEqualTo: uid)
-        .snapshots();
-  }
-
+  // Helper to normalize warmth strings
   String _normalizeWarmth(String v) {
     final lower = v.toLowerCase();
     if (lower == 'warm') return 'Heavy';
@@ -106,6 +86,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
     });
   }
 
+  // Client-side filtering to avoid Firestore Index errors
   List<MarketplaceListing> _applyFilters(List<MarketplaceListing> all) {
     final q = _searchCtrl.text.trim().toLowerCase();
 
@@ -116,16 +97,18 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       final searchOk = q.isEmpty ||
           p.title.toLowerCase().contains(q) ||
           p.category.toLowerCase().contains(q) ||
-          p.warmthLevel.toLowerCase().contains(q);
+          p.description.toLowerCase().contains(q);
 
       return catOk && warmOk && searchOk;
     }).toList();
 
+    // Sorting
     if (_sort == 'Price: Low') {
       filtered.sort((a, b) => a.price.compareTo(b.price));
     } else if (_sort == 'Price: High') {
       filtered.sort((a, b) => b.price.compareTo(a.price));
     } else {
+      // Default: Newest first
       filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     }
 
@@ -134,11 +117,13 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    final showFab = _tabController.index == 1; // only on My Listings
-
     return Scaffold(
+      backgroundColor: Colors.grey[50], // Light background for contrast
       appBar: AppBar(
-        title: const Text('Marketplace'),
+        title: const Text('Marketplace', style: TextStyle(fontWeight: FontWeight.bold)),
+        elevation: 0,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         actions: [
           // Cart icon + badge
           StreamBuilder(
@@ -149,7 +134,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
                 children: [
                   IconButton(
                     tooltip: 'Cart',
-                    icon: const Icon(Icons.shopping_cart_outlined),
+                    icon: const Icon(Icons.shopping_bag_outlined),
                     onPressed: () {
                       Navigator.push(context, MaterialPageRoute(builder: (_) => const CartScreen()));
                     },
@@ -159,14 +144,14 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
                       right: 8,
                       top: 8,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                         decoration: BoxDecoration(
                           color: Colors.red,
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(
                           '$count',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 11),
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
                         ),
                       ),
                     ),
@@ -177,53 +162,66 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
         ],
         bottom: TabBar(
           controller: _tabController,
+          labelColor: AppColors.primaryGreen,
+          unselectedLabelColor: Colors.grey,
+          indicatorColor: AppColors.primaryGreen,
+          indicatorWeight: 3,
           tabs: const [
             Tab(text: 'Browse'),
             Tab(text: 'My Listings'),
           ],
         ),
       ),
-      floatingActionButton: showFab
-          ? FloatingActionButton.extended(
-              backgroundColor: AppColors.primaryGreen,
-              foregroundColor: Colors.white,
-              icon: const Icon(Icons.add),
-              label: const Text('Add Listing'),
-              onPressed: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => CreateListingScreen()));
-              },
-            )
-          : null,
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: AppColors.primaryGreen,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.camera_alt),
+        label: const Text('Sell Item'),
+        onPressed: () {
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateListingScreen()));
+        },
+      ),
       body: TabBarView(
         controller: _tabController,
         children: [
-          _browseTab(),
-          _myListingsTab(),
+          _buildBrowseTab(),
+          _buildMyListingsTab(),
         ],
       ),
     );
   }
 
-  Widget _browseTab() {
+  // ---------------------------------------------------------------------------
+  // BROWSE TAB
+  // ---------------------------------------------------------------------------
+  Widget _buildBrowseTab() {
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+        // 1. Search & Filters Container
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
           child: Column(
             children: [
               _searchBar(),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               _filterRow(),
               if (_hasActiveFilters) ...[
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 _activeFiltersBar(),
               ],
             ],
           ),
         ),
+
+        // 2. Product Grid
         Expanded(
           child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: _browseStream(),
+            // We fetch ALL active listings and filter locally
+            stream: FirebaseFirestore.instance
+                .collection('marketplace_listings')
+                .where('isAvailable', isEqualTo: true)
+                .snapshots(),
             builder: (context, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
@@ -233,25 +231,15 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
               }
 
               final docs = snap.data?.docs ?? [];
-              final allDocs = docs.map((d) {
-              final data = d.data();
-              final isAvailable = data['isAvailable'];
-
-              // Treat missing as available (backward compatible with old listings)
-              final available = (isAvailable == null) ? true : (isAvailable == true);
-
-              return available ? MarketplaceListing.fromDoc(d) : null;
-            }).whereType<MarketplaceListing>().toList();
-
-            final filtered = _applyFilters(allDocs);
-
+              final allDocs = docs.map((d) => MarketplaceListing.fromDoc(d)).toList();
+              final filtered = _applyFilters(allDocs);
 
               if (filtered.isEmpty) return _emptyState();
 
               return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                padding: const EdgeInsets.all(16),
                 itemCount: filtered.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                separatorBuilder: (_, __) => const SizedBox(height: 16),
                 itemBuilder: (context, i) => _listingCard(filtered[i]),
               );
             },
@@ -261,37 +249,93 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
     );
   }
 
-  Widget _myListingsTab() {
+  // ---------------------------------------------------------------------------
+  // MY LISTINGS TAB
+  // ---------------------------------------------------------------------------
+  Widget _buildMyListingsTab() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      return const Center(child: Text('Please sign in to manage listings.'));
+    }
+
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: _myListingsStream(),
+      stream: FirebaseFirestore.instance
+          .collection('marketplace_listings')
+          .where('sellerId', isEqualTo: uid)
+          .snapshots(),
       builder: (context, snap) {
-        if (FirebaseAuth.instance.currentUser == null) {
-          return const Center(child: Text('Please sign in to manage listings.'));
-        }
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-        if (snap.hasError) {
-          return Center(child: Text('Error: ${snap.error}'));
-        }
-
+        
         final docs = snap.data?.docs ?? [];
-        final list = docs.map(MarketplaceListing.fromDoc).toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-        if (list.isEmpty) {
-          return const Center(child: Text('No listings yet. Tap “Add Listing”.'));
+        if (docs.isEmpty) {
+          return const Center(child: Text('You haven\'t listed anything yet.'));
         }
 
-        return ListView.separated(
+        return ListView.builder(
           padding: const EdgeInsets.all(16),
-          itemCount: list.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (context, i) => _myListingCard(list[i]),
+          itemCount: docs.length,
+          itemBuilder: (context, i) {
+            final item = MarketplaceListing.fromDoc(docs[i]);
+            return Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.grey.shade200),
+              ),
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                contentPadding: const EdgeInsets.all(8),
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    item.imageUrl,
+                    width: 60,
+                    height: 60,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_,__,___) => Container(width:60, height:60, color:Colors.grey[200]),
+                  ),
+                ),
+                title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text("RM ${item.price.toStringAsFixed(2)} • ${item.size}"),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  onPressed: () => _deleteListing(item.id),
+                ),
+              ),
+            );
+          },
         );
       },
     );
   }
+
+  Future<void> _deleteListing(String id) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Delete Listing?"),
+        content: const Text("This cannot be undone."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("Delete"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await FirebaseFirestore.instance.collection('marketplace_listings').doc(id).delete();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // WIDGETS
+  // ---------------------------------------------------------------------------
 
   Widget _searchBar() {
     return TextField(
@@ -299,23 +343,19 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       onChanged: (_) => setState(() {}),
       decoration: InputDecoration(
         hintText: 'Search items...',
-        prefixIcon: const Icon(Icons.search),
-        suffixIcon: _searchCtrl.text.trim().isEmpty
-            ? null
-            : IconButton(
+        prefixIcon: const Icon(Icons.search, color: Colors.grey),
+        suffixIcon: _searchCtrl.text.isNotEmpty
+            ? IconButton(
                 onPressed: () => setState(() => _searchCtrl.clear()),
-                icon: const Icon(Icons.clear),
-              ),
+                icon: const Icon(Icons.clear, color: Colors.grey),
+              )
+            : null,
         filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        fillColor: Colors.grey[100],
+        contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 20),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: AppColors.border),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: AppColors.border),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
         ),
       ),
     );
@@ -332,7 +372,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
             onChanged: (v) => setState(() => _selectedCategory = v),
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         Expanded(
           child: _chipDropdown(
             label: 'Warmth',
@@ -341,7 +381,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
             onChanged: (v) => setState(() => _selectedWarmth = v),
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         Expanded(
           child: _chipDropdown(
             label: 'Sort',
@@ -361,21 +401,26 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
     required ValueChanged<String> onChanged,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade300),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: value,
           isExpanded: true,
-          icon: const Icon(Icons.keyboard_arrow_down),
-          items: values.map((v) => DropdownMenuItem(value: v, child: Text('$label: $v'))).toList(),
+          icon: const Icon(Icons.keyboard_arrow_down, size: 18),
+          style: const TextStyle(fontSize: 12, color: Colors.black87),
+          items: values.map((v) {
+            // Shorten the display text if it's the selected value to fit
+            final display = (v == value && v != 'All' && label != 'Sort') ? v : (v == 'All' ? label : v);
+            return DropdownMenuItem(value: v, child: Text(display, maxLines: 1));
+          }).toList(),
           onChanged: (v) {
-            if (v == null) return;
-            onChanged(v);
+            if (v != null) onChanged(v);
           },
         ),
       ),
@@ -391,191 +436,154 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
     if (_selectedWarmth != 'All') {
       chips.add(_activeChip('Warmth: $_selectedWarmth', () => setState(() => _selectedWarmth = 'All')));
     }
-    final q = _searchCtrl.text.trim();
-    if (q.isNotEmpty) {
-      chips.add(_activeChip('Search: $q', () => setState(() => _searchCtrl.clear())));
-    }
 
-    return Row(
-      children: [
-        Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: chips.map((c) => Padding(padding: const EdgeInsets.only(right: 8), child: c)).toList(),
-            ),
-          ),
-        ),
-        TextButton(onPressed: _clearFilters, child: const Text('Clear')),
-      ],
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: chips.map((c) => Padding(padding: const EdgeInsets.only(right: 8), child: c)).toList(),
+      ),
     );
   }
 
   Widget _activeChip(String text, VoidCallback onRemove) {
     return Chip(
-      label: Text(text, style: const TextStyle(fontWeight: FontWeight.w700)),
-      deleteIcon: const Icon(Icons.close, size: 18),
+      label: Text(text, style: const TextStyle(fontSize: 12)),
+      backgroundColor: AppColors.primaryGreen.withOpacity(0.1),
+      labelStyle: const TextStyle(color: AppColors.primaryGreen, fontWeight: FontWeight.bold),
+      deleteIcon: const Icon(Icons.close, size: 16, color: AppColors.primaryGreen),
       onDeleted: onRemove,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      side: BorderSide.none,
     );
   }
 
   Widget _emptyState() {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.search_off_rounded, size: 44, color: AppColors.textMuted),
-            const SizedBox(height: 10),
-            const Text('No items match your filters.', style: TextStyle(fontWeight: FontWeight.w900)),
-            const SizedBox(height: 6),
-            Text(
-              _hasActiveFilters ? 'Try clearing filters or changing your search.' : 'No listings available yet.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            if (_hasActiveFilters)
-              ElevatedButton(
-                onPressed: _clearFilters,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryGreen,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-                child: const Text('Clear Filters'),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _listingCard(MarketplaceListing p) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: () {},
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Row(
-          children: [
-            _imageBox(p.imageUrl),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      p.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${p.category} • ${p.warmthLevel}',
-                      style: const TextStyle(
-                        color: AppColors.textMuted,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text('RM ${p.price.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w900)),
-                  ],
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(right: 10),
-              child: IconButton(
-                tooltip: 'Add to cart',
-                icon: const Icon(Icons.add_shopping_cart_rounded),
-                onPressed: () async {
-                  try {
-                    await CartService.addToCart(listingId: p.id, qty: 1);
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Added to cart')));
-                  } catch (e) {
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
-                  }
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _myListingCard(MarketplaceListing p) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          _imageBox(p.imageUrl),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(p.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w900)),
-                  const SizedBox(height: 4),
-                  Text('${p.category} • ${p.warmthLevel}',
-                      style: const TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w700, fontSize: 12)),
-                  const SizedBox(height: 8),
-                  Text('RM ${p.price.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w900)),
-                ],
-              ),
+          Icon(Icons.search_off_rounded, size: 60, color: Colors.grey[300]),
+          const SizedBox(height: 10),
+          const Text('No items match your filters.', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+          if (_hasActiveFilters)
+            TextButton(
+              onPressed: _clearFilters,
+              child: const Text('Clear All Filters', style: TextStyle(color: AppColors.primaryGreen)),
             ),
-          ),
-          IconButton(
-            tooltip: 'Delete',
-            icon: const Icon(Icons.delete_outline, color: Colors.red),
-            onPressed: () async {
-              await FirebaseFirestore.instance.collection('marketplace_listings').doc(p.id).delete();
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Deleted')));
-            },
-          ),
         ],
       ),
     );
   }
 
-  Widget _imageBox(String url) {
-    return ClipRRect(
-      borderRadius: const BorderRadius.horizontal(left: Radius.circular(18)),
-      child: SizedBox(
-        width: 96,
-        height: 96,
-        child: url.isEmpty
-            ? Container(
-                color: AppColors.softGreen.withValues(alpha: 0.5),
-                child: const Icon(Icons.image_outlined, color: AppColors.primaryGreen),
-              )
-            : Image.network(
-                url,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  color: AppColors.softGreen.withValues(alpha: 0.5),
-                  child: const Icon(Icons.broken_image_outlined, color: AppColors.primaryGreen),
+  // ---------------------------------------------------------------------------
+  // LISTING CARD (The Beautiful Part)
+  // ---------------------------------------------------------------------------
+  Widget _listingCard(MarketplaceListing item) {
+    return GestureDetector(
+      onTap: () {
+        // Navigate to the beautiful details screen
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => ProductDetailsScreen(listing: item)),
+        );
+      },
+      child: Container(
+        height: 120,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.08),
+              blurRadius: 15,
+              offset: const Offset(0, 5),
+            )
+          ],
+        ),
+        child: Row(
+          children: [
+            // Image Section
+            Hero(
+              tag: item.id,
+              child: Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  borderRadius: const BorderRadius.horizontal(left: Radius.circular(16)),
+                  image: DecorationImage(
+                    image: NetworkImage(item.imageUrl),
+                    fit: BoxFit.cover,
+                  ),
                 ),
               ),
+            ),
+            
+            // Info Section
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        // Category • Size Badge
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                item.size,
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              item.category,
+                              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    
+                    // Price Row
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          "RM ${item.price.toStringAsFixed(2)}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                            color: AppColors.primaryGreen,
+                          ),
+                        ),
+                        const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
