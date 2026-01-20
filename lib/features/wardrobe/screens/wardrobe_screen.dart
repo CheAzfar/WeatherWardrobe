@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import 'add_item_screen.dart';
+import 'edit_item_screen.dart'; 
 
 class WardrobeScreen extends StatefulWidget {
   const WardrobeScreen({super.key});
@@ -18,25 +19,69 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   final categories = const ['All', 'Tops', 'Bottoms', 'Outerwear', 'Shoes'];
 
   Stream<QuerySnapshot<Map<String, dynamic>>> _stream() {
-  final uid = FirebaseAuth.instance.currentUser?.uid;
-  if (uid == null) return const Stream.empty();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return const Stream.empty();
 
-  Query<Map<String, dynamic>> q = FirebaseFirestore.instance
-      .collection('users')
-      .doc(uid)
-      .collection('wardrobe_items');
+    // FIX 1: REMOVED .orderBy() here to prevent the Index Error
+    Query<Map<String, dynamic>> q = FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('wardrobe_items');
 
-  // If "All", we can order directly (no composite index needed)
-  if (selectedCategory == 'All') {
-    q = q.orderBy('createdAt', descending: true);
-  } else {
-    // If filtered by category, DO NOT orderBy to avoid composite index
-    q = q.where('category', isEqualTo: selectedCategory);
+    if (selectedCategory != 'All') {
+      q = q.where('category', isEqualTo: selectedCategory);
+    }
+
+    return q.snapshots();
   }
 
-  return q.snapshots();
-}
+  // Delete Logic
+  Future<void> _deleteItem(String docId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Item?'),
+        content: const Text('This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
 
+    if (confirm != true) return;
+
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('wardrobe_items')
+          .doc(docId)
+          .delete();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Item deleted')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -80,20 +125,19 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                       );
                     }
 
-                    final docs = (snap.data?.docs ?? []).toList();
+                    // FIX 2: Manually Sort the list here (Newest First)
+                    // We copy the list using List.of() so we can sort it safely
+                    final docs = List.of(snap.data?.docs ?? []);
                     
-                    if (selectedCategory != 'All') {
-                      // Sort locally by createdAt descending (handles null safely)
-                      docs.sort((a, b) {
-                        final at = a.data()['createdAt'];
-                        final bt = b.data()['createdAt'];
-
-                        final aTime = (at is Timestamp) ? at.toDate() : DateTime.fromMillisecondsSinceEpoch(0);
-                        final bTime = (bt is Timestamp) ? bt.toDate() : DateTime.fromMillisecondsSinceEpoch(0);
-
-                        return bTime.compareTo(aTime);
-                      });
-                    }
+                    docs.sort((a, b) {
+                      final d1 = a.data();
+                      final d2 = b.data();
+                      // Safely get dates, defaulting to old date if null
+                      final t1 = (d1['createdAt'] as Timestamp?)?.toDate() ?? DateTime(1970);
+                      final t2 = (d2['createdAt'] as Timestamp?)?.toDate() ?? DateTime(1970);
+                      // Sort Descending (Newest first)
+                      return t2.compareTo(t1); 
+                    });
 
                     if (docs.isEmpty) return _empty();
 
@@ -106,86 +150,135 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         childAspectRatio: 0.78,
                       ),
                       itemBuilder: (context, i) {
-                        final d = docs[i].data();
+                        final doc = docs[i]; // Use our sorted list
+                        final d = doc.data();
 
                         final name = (d['name'] ?? '').toString();
                         final category = (d['category'] ?? '').toString();
                         final warmth = (d['warmthLevel'] ?? '').toString();
                         final imageUrl = (d['imageUrl'] ?? '').toString();
+                        final source = (d['source'] ?? '').toString();
 
-                        // Optional labels (works with your order-writing later)
-                        final source = (d['source'] ?? '').toString(); // 'purchase' or 'manual'
-
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: AppColors.border),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Stack(
-                                  children: [
-                                    ClipRRect(
-                                      borderRadius: const BorderRadius.vertical(
-                                        top: Radius.circular(18),
+                        return GestureDetector(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => EditItemScreen(
+                                  docId: doc.id,
+                                  initialName: name,
+                                  initialCategory: category,
+                                  initialWarmth: warmth,
+                                  initialImageUrl: imageUrl,
+                                ),
+                              ),
+                            );
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(color: AppColors.border),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.03),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 4),
+                                )
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Stack(
+                                    children: [
+                                      ClipRRect(
+                                        borderRadius: const BorderRadius.vertical(
+                                          top: Radius.circular(18),
+                                        ),
+                                        child: _itemImage(imageUrl),
                                       ),
-                                      child: _itemImage(imageUrl),
-                                    ),
-                                    if (source == 'purchase')
-                                      Positioned(
-                                        top: 10,
-                                        left: 10,
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                          decoration: BoxDecoration(
-                                            color: Colors.black.withValues(alpha: 0.55),
-                                            borderRadius: BorderRadius.circular(999),
+                                      
+                                      if (source == 'purchase')
+                                        Positioned(
+                                          top: 10,
+                                          left: 10,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withOpacity(0.55),
+                                              borderRadius: BorderRadius.circular(999),
+                                            ),
+                                            child: const Text(
+                                              'Purchased',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
                                           ),
-                                          child: const Text(
-                                            'Purchased',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w800,
+                                        ),
+
+                                      Positioned(
+                                        top: 5,
+                                        right: 5,
+                                        child: InkWell(
+                                          onTap: () => _deleteItem(doc.id),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white.withOpacity(0.9),
+                                              shape: BoxShape.circle,
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.black.withOpacity(0.1),
+                                                  blurRadius: 4,
+                                                )
+                                              ],
+                                            ),
+                                            child: const Icon(
+                                              Icons.delete_outline,
+                                              size: 20,
+                                              color: Colors.red,
                                             ),
                                           ),
                                         ),
                                       ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 14,
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 14,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '$category • $warmth',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: AppColors.textMuted,
-                                        fontWeight: FontWeight.w600,
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '$category • $warmth',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.textMuted,
+                                          fontWeight: FontWeight.w600,
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         );
                       },
@@ -200,11 +293,14 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     );
   }
 
+  // ... (Keep existing helpers: _itemImage, _header, _chips, _empty) ...
+  // Or copy them from below if you want the complete file:
+
   Widget _itemImage(String imageUrl) {
     if (imageUrl.isEmpty) {
       return Container(
         width: double.infinity,
-        color: AppColors.softGreen.withValues(alpha: 0.6),
+        color: AppColors.softGreen.withOpacity(0.6),
         child: const Center(
           child: Icon(Icons.image_outlined, size: 40, color: AppColors.primaryGreen),
         ),
@@ -217,7 +313,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       width: double.infinity,
       errorBuilder: (_, __, ___) => Container(
         width: double.infinity,
-        color: AppColors.softGreen.withValues(alpha: 0.6),
+        color: AppColors.softGreen.withOpacity(0.6),
         child: const Center(
           child: Icon(Icons.broken_image_outlined, size: 40, color: AppColors.primaryGreen),
         ),
@@ -226,7 +322,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         if (progress == null) return child;
         return Container(
           width: double.infinity,
-          color: AppColors.softGreen.withValues(alpha: 0.35),
+          color: AppColors.softGreen.withOpacity(0.35),
           child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
         );
       },
@@ -242,8 +338,8 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            AppColors.primaryGreen.withValues(alpha: 0.95),
-            AppColors.primaryGreen.withValues(alpha: 0.55),
+            AppColors.primaryGreen.withOpacity(0.95),
+            AppColors.primaryGreen.withOpacity(0.55),
           ],
         ),
       ),
@@ -253,7 +349,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
             width: 46,
             height: 46,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.18),
+              color: Colors.white.withOpacity(0.18),
               shape: BoxShape.circle,
             ),
             child: const Icon(Icons.checkroom_outlined, color: Colors.white),
@@ -269,7 +365,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'Purchased items appear here automatically',
+                  'Tap an item to edit, or tap the trash icon to delete.',
                   style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
                 ),
               ],
@@ -314,7 +410,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   Widget _empty() {
     return const Center(
       child: Text(
-        'No items yet.\nBuy from Shop and it will appear here.',
+        'No items yet.\nAdd items or buy from Shop.',
         textAlign: TextAlign.center,
       ),
     );
