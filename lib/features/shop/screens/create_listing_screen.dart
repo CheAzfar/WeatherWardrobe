@@ -18,22 +18,39 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
+  final _descCtrl = TextEditingController();
 
   final _picker = ImagePicker();
   Uint8List? _imageBytes;
 
   String _category = 'Tops';
   String _warmth = 'Light';
-
+  String _size = 'M'; // Default start value
   bool _saving = false;
 
   final List<String> _categories = const ['Tops', 'Bottoms', 'Outerwear', 'Shoes'];
-  final List<String> _warmthLevels = const ['Light', 'Medium', 'Warm'];
+  final List<String> _warmthLevels = const ['Light', 'Medium', 'Heavy'];
+
+  // --- LOGIC: Separate Size Lists ---
+  final List<String> _clothingSizes = const ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
+  final List<String> _shoeSizes = const [
+    'EU 35', 'EU 36', 'EU 37', 'EU 38', 'EU 39', 'EU 40', 
+    'EU 41', 'EU 42', 'EU 43', 'EU 44', 'EU 45', 'EU 46'
+  ];
+
+  // Helper to get correct list based on current category
+  List<String> get _currentSizes {
+    if (_category == 'Shoes') {
+      return _shoeSizes;
+    }
+    return _clothingSizes;
+  }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     _priceCtrl.dispose();
+    _descCtrl.dispose();
     super.dispose();
   }
 
@@ -85,19 +102,19 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     setState(() => _saving = true);
 
     try {
-      // 1) Upload photo to Cloudinary
       final imageUrl = await CloudinaryUploader.uploadImageBytes(
         bytes: _imageBytes!,
         folder: 'weather_wardrobe/listings',
       );
 
-      // 2) Create listing in Firestore
       final listingId = await MarketplaceService.createListing(
         name: _nameCtrl.text.trim(),
         category: _category,
         warmthLevel: _warmth,
         price: price,
         imageUrl: imageUrl,
+        size: _size,
+        description: _descCtrl.text,
       );
 
       if (!mounted) return;
@@ -128,7 +145,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Create Listing')),
+      appBar: AppBar(title: const Text('Sell Item')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset),
@@ -139,6 +156,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                 _header(),
                 const SizedBox(height: 14),
 
+                // --- PHOTO ---
                 _card(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -184,9 +202,11 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
 
                 const SizedBox(height: 12),
 
+                // --- DETAILS ---
                 _card(
                   child: Column(
                     children: [
+                      // Name
                       TextFormField(
                         controller: _nameCtrl,
                         decoration: InputDecoration(
@@ -200,43 +220,109 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                         },
                       ),
                       const SizedBox(height: 12),
+                      
+                      // Price & Size Row
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 2,
+                            child: TextFormField(
+                              controller: _priceCtrl,
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              decoration: InputDecoration(
+                                labelText: 'Price (RM)',
+                                hintText: 'e.g., 25.00',
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                              ),
+                              validator: (v) {
+                                final p = _parsePrice(v ?? '');
+                                if (p == null) return 'Enter a valid price';
+                                return null;
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          
+                          // --- UPDATED SIZE DROPDOWN ---
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: _size,
+                              isExpanded: true, // Prevents overflow for longer text
+                              decoration: InputDecoration(
+                                labelText: 'Size',
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                              ),
+                              items: _currentSizes.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                              onChanged: _saving ? null : (v) => setState(() => _size = v!),
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      const SizedBox(height: 12),
+
+                      // Category & Warmth Row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: _category,
+                              decoration: InputDecoration(
+                                labelText: 'Category',
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                              ),
+                              items: _categories
+                                  .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                                  .toList(),
+                              // --- LOGIC CHANGE HERE ---
+                              onChanged: _saving ? null : (v) {
+                                if (v == null) return;
+                                setState(() {
+                                  _category = v;
+                                  
+                                  // If we switched to shoes, pick default shoe size
+                                  // If we switched to clothes, pick default clothes size
+                                  if (_category == 'Shoes') {
+                                    if (!_shoeSizes.contains(_size)) {
+                                      _size = _shoeSizes[3]; // Default to ~38/39
+                                    }
+                                  } else {
+                                    if (!_clothingSizes.contains(_size)) {
+                                      _size = 'M'; // Default to M
+                                    }
+                                  }
+                                });
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: _warmth,
+                              decoration: InputDecoration(
+                                labelText: 'Warmth',
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                              ),
+                              items: _warmthLevels
+                                  .map((w) => DropdownMenuItem(value: w, child: Text(w)))
+                                  .toList(),
+                              onChanged: _saving ? null : (v) => setState(() => _warmth = v ?? _warmth),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Description
                       TextFormField(
-                        controller: _priceCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        controller: _descCtrl,
+                        maxLines: 3,
                         decoration: InputDecoration(
-                          labelText: 'Price (RM)',
-                          hintText: 'e.g., 25.00',
+                          labelText: 'Description (Optional)',
+                          hintText: 'Condition, Brand, Material, etc.',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                          alignLabelWithHint: true,
                         ),
-                        validator: (v) {
-                          final p = _parsePrice(v ?? '');
-                          if (p == null) return 'Enter a valid price';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: _category,
-                        decoration: InputDecoration(
-                          labelText: 'Category',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                        ),
-                        items: _categories
-                            .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                            .toList(),
-                        onChanged: _saving ? null : (v) => setState(() => _category = v ?? _category),
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: _warmth,
-                        decoration: InputDecoration(
-                          labelText: 'Warmth',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                        ),
-                        items: _warmthLevels
-                            .map((w) => DropdownMenuItem(value: w, child: Text(w)))
-                            .toList(),
-                        onChanged: _saving ? null : (v) => setState(() => _warmth = v ?? _warmth),
                       ),
                     ],
                   ),
@@ -244,6 +330,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
 
                 const SizedBox(height: 16),
 
+                // --- BUTTON ---
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -261,7 +348,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
                         : const Text(
-                            'Create Listing',
+                            'Post Listing',
                             style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
                           ),
                   ),

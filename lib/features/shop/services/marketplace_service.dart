@@ -2,205 +2,149 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/marketplace_listing.dart';
+import 'cart_service.dart';
 
 class MarketplaceService {
-  static final _firestore = FirebaseFirestore.instance;
+  static final _db = FirebaseFirestore.instance;
   static final _auth = FirebaseAuth.instance;
 
-  static String? get currentUserId => _auth.currentUser?.uid;
-  static String? get currentUserEmail => _auth.currentUser?.email;
+  // -------------------------
+  // Helpers
+  // -------------------------
+  static String _normalizeWarmth(String v) {
+    final lower = v.trim().toLowerCase();
+    if (lower == 'warm') return 'Heavy';
+    if (lower == 'heavy') return 'Heavy';
+    if (lower == 'medium') return 'Medium';
+    if (lower == 'light') return 'Light';
+    return v;
+  }
 
-  /// Create listing (Firestore only)
-  /// NOTE: imageUrl is required (Cloudinary URL), not local path.
+  // -------------------------
+  // 1) Create Listing
+  // -------------------------
   static Future<String?> createListing({
     required String name,
     required String category,
     required String warmthLevel,
     required double price,
     required String imageUrl,
+    required String size,
+    required String description,
   }) async {
-    try {
-      final userId = currentUserId;
-      final userEmail = currentUserEmail;
-      if (userId == null || userEmail == null) return null;
+    final user = _auth.currentUser;
+    if (user == null) return null;
 
-      final listing = MarketplaceListing(
-        id: '',
-        name: name,
-        category: category,
-        warmthLevel: warmthLevel,
-        imageUrl: imageUrl,
-        price: price,
-        sellerId: userId,
-        sellerEmail: userEmail,
-        createdAt: DateTime.now(),
-      );
-
-      final docRef = await _firestore.collection('listings').add(listing.toFirestore());
-      return docRef.id;
-    } catch (e) {
-      // ignore: avoid_print
-      print('Error creating listing: $e');
-      return null;
-    }
-  }
-
-  /// Get all listings excluding user's own
-  static Stream<List<MarketplaceListing>> getAllListings() {
-    final userId = currentUserId ?? '';
-
-    return _firestore
-        .collection('listings')
-        .where('sellerId', isNotEqualTo: userId)
-        .snapshots()
-        .map((snapshot) {
-      return snapshot.docs.map((doc) {
-        return MarketplaceListing.fromDoc(doc);
-      }).toList();
+    final doc = await _db.collection('marketplace_listings').add({
+      'title': name.trim(),
+      'name': name.trim(),
+      'category': category.trim(),
+      'warmthLevel': _normalizeWarmth(warmthLevel),
+      'price': price,
+      'imageUrl': imageUrl,
+      'size': size,
+      'description': description.trim(),
+      'sellerId': user.uid,
+      'isAvailable': true,
+      'status': 'active',
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
     });
+
+    return doc.id;
   }
 
-  /// Get current user's listings
-  static Stream<List<MarketplaceListing>> getMyListings() {
-    final userId = currentUserId;
-    if (userId == null) return Stream.value([]);
-
-    return _firestore
-        .collection('listings')
-        .where('sellerId', isEqualTo: userId)
-        .snapshots()
-        .map((snapshot) {
-      return snapshot.docs.map((doc) {
-        return MarketplaceListing.fromDoc(doc);
-      }).toList();
-    });
-  }
-
-  /// Delete listing
-  static Future<bool> deleteListing(String listingId) async {
-    try {
-      await _firestore.collection('listings').doc(listingId).delete();
-      return true;
-    } catch (e) {
-      // ignore: avoid_print
-      print('Error deleting listing: $e');
-      return false;
-    }
-  }
-
-  /// Create order + move purchased items into Wardrobe (Firestore-only)
-  ///
-  /// Backward-compatible parameters:
-  /// - New: subtotalAmount + paymentRef
-  /// - Old: totalAmount + paymentToken
-  ///
-  /// Behavior:
-  /// 1) create order doc in /orders
-  /// 2) add each purchased item into /users/{uid}/wardrobe_items
-  /// 3) delete purchased listings from /listings
+  // -------------------------
+  // 2) Create Order (UPDATED)
+  // -------------------------
   static Future<String?> createOrder({
     required List<MarketplaceListing> items,
-
-    // NEW style (recommended)
-    double? subtotalAmount,
-    String? paymentRef,
-
-    // OLD style (supported)
-    double? totalAmount,
-    String? paymentToken,
+    required double subtotalAmount,
+    required String paymentRef,
   }) async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+
+    final uid = user.uid;
+    final fee = subtotalAmount * 0.05;
+    final total = subtotalAmount + fee;
+
     try {
-      final userId = currentUserId;
-      final userEmail = currentUserEmail;
-      if (userId == null || userEmail == null) return null;
-
-      // Determine amounts
-      final double subtotal = subtotalAmount ?? totalAmount ?? 0.0;
-      final double commission = subtotal * 0.05;
-      final double finalTotal = subtotal + commission;
-
-      final String payRef = paymentRef ?? paymentToken ?? 'unknown_payment';
-
-      // 1) Create order
-      final orderData = {
-        'buyerId': userId,
-        'buyerEmail': userEmail,
-        'items': items.map((item) {
-          return {
-            'listingId': item.id,
-            'name': item.name,
-            'category': item.category,
-            'warmthLevel': item.warmthLevel,
-            'price': item.price,
-            'imageUrl': item.imageUrl,
-            'sellerId': item.sellerId,
-            'sellerEmail': item.sellerEmail,
-          };
-        }).toList(),
-        'subtotal': subtotal,
-        'commission': commission,
-        'totalAmount': finalTotal,
-        'paymentRef': payRef,
-        'status': 'completed',
+      // Create the order in the ROOT 'orders' collection
+      final orderRef = await _db.collection('orders').add({
+        'buyerId': uid,
+        'subtotalAmount': subtotalAmount,
+        'platformFeeRate': 0.05,
+        'platformFee': fee,
+        'totalAmount': total,
+        'paymentRef': paymentRef,
+        
+        // --- CHANGED HERE: Immediately 'completed' ---
+        'status': 'completed', 
+        
         'createdAt': FieldValue.serverTimestamp(),
-      };
+        'itemsCount': items.length, 
+      });
 
-      final orderDoc = await _firestore.collection('orders').add(orderData);
+      final batch = _db.batch();
 
-      // 2) Batch: add to wardrobe + delete listings
-      final wardrobeCol =
-          _firestore.collection('users').doc(userId).collection('wardrobe_items');
-
-      final batch = _firestore.batch();
-
-      for (final item in items) {
-        // Put item into wardrobe
-        batch.set(wardrobeCol.doc(), {
-          'name': item.name,
-          'category': item.category,
-          'warmthLevel': item.warmthLevel,
-          'imageUrl': item.imageUrl,
-          'price': item.price,
-          'source': 'purchase',
-          'sourceListingId': item.id,
-          'sourceOrderId': orderDoc.id,
-
-          // ✅ Wardrobe screens orderBy(createdAt)
+      for (final it in items) {
+        // 2.1) Order item record
+        final itemRef = orderRef.collection('items').doc(it.id);
+        batch.set(itemRef, {
+          'listingId': it.id,
+          'title': it.title,
+          'name': it.title,
+          'category': it.category,
+          'warmthLevel': _normalizeWarmth(it.warmthLevel),
+          'price': it.price,
+          'imageUrl': it.imageUrl,
+          'sellerId': it.sellerId,
+          'size': it.size, 
           'createdAt': FieldValue.serverTimestamp(),
-
-          // Optional
-          'purchasedAt': FieldValue.serverTimestamp(),
         });
 
-        // Delete the listing
-        batch.delete(_firestore.collection('listings').doc(item.id));
+        // 2.2) Mark listing sold
+        final listingRef = _db.collection('marketplace_listings').doc(it.id);
+        batch.update(listingRef, {
+          'isAvailable': false,
+          'status': 'sold',
+          'soldTo': uid,
+          'soldAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        // 2.3) Add to buyer wardrobe
+        final wardrobeRef =
+            _db.collection('users').doc(uid).collection('wardrobe_items').doc(it.id);
+
+        batch.set(
+          wardrobeRef,
+          {
+            'name': it.title,
+            'title': it.title,
+            'category': it.category,
+            'warmthLevel': _normalizeWarmth(it.warmthLevel),
+            'imageUrl': it.imageUrl,
+            'purchased': true,
+            'isPurchased': true,
+            'purchaseStatus': 'purchased',
+            'source': 'purchase',
+            'listingId': it.id,
+            'sellerId': it.sellerId,
+            'boughtAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
       }
 
       await batch.commit();
-      return orderDoc.id;
+      await CartService.clearCart();
+
+      return orderRef.id;
     } catch (e) {
-      // ignore: avoid_print
-      print('Error creating order: $e');
+      print("Error creating order: $e");
       return null;
     }
-  }
-
-  /// User's orders
-  static Stream<List<Map<String, dynamic>>> getMyOrders() {
-    final userId = currentUserId;
-    if (userId == null) return Stream.value([]);
-
-    return _firestore
-        .collection('orders')
-        .where('buyerId', isEqualTo: userId)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snapshot) {
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        data['id'] = doc.id;
-        return data;
-      }).toList();
-    });
   }
 }
