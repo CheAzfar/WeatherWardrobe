@@ -4,7 +4,7 @@
 <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
 
     <application
-        android:label="weather_wardrobe"
+        android:label="WeatherWardrobe"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity
