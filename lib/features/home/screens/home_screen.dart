@@ -1,6 +1,9 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 
+import '../../shop/screens/shop_screen.dart'; 
 import '../../suggestion/screens/suggestion_context_screen.dart';
 
 import '../../weather/models/weather_info.dart';
@@ -18,32 +21,40 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   String _city = CityStore.defaultCity;
-
   Future<WeatherInfo>? _weatherFuture;
+  
+  // Stream to listen to user's real wardrobe changes live
+  Stream<QuerySnapshot>? _wardrobeStream;
+
+  // New: Controls which item index is picked (for refreshing outfit)
+  int _outfitSeed = 0;
 
   @override
   void initState() {
     super.initState();
-
-    // Start with default city, so UI can render immediately
     _weatherFuture = WeatherService.fetchByCity(_city);
+    
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      _wardrobeStream = FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('wardrobe_items')
+          .snapshots();
+    }
 
-    // Then load saved city from Firestore and refresh
     _initCityAndWeather();
   }
 
   Future<void> _initCityAndWeather() async {
     try {
-      final c = await CityStore.fetchCity(); // Firestore-based
+      final c = await CityStore.fetchCity();
       if (!mounted) return;
-
       setState(() {
         _city = c;
         _weatherFuture = WeatherService.fetchByCity(_city);
       });
-    } catch (_) {
-      // If Firestore fails, keep default city
-    }
+    } catch (_) {}
   }
 
   void _refreshWeather() {
@@ -52,13 +63,17 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _cycleOutfit() {
+    setState(() {
+      _outfitSeed++; // Increment seed to pick next available item
+    });
+  }
+
   Future<void> _openCitySelector() async {
     final chosen = await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const CitySelectorScreen()),
     );
-
-    // After returning, re-fetch Firestore city + refresh weather
     if (chosen != null) {
       await _initCityAndWeather();
     }
@@ -66,8 +81,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final wf = _weatherFuture;
-
     return SafeArea(
       child: RefreshIndicator(
         onRefresh: () async => _refreshWeather(),
@@ -77,33 +90,39 @@ class _HomeScreenState extends State<HomeScreen> {
             _heroHeader(),
             const SizedBox(height: 16),
 
-            if (wf == null)
-              _loadingWeatherCard()
+            if (_weatherFuture == null)
+              _loadingCard()
             else
               FutureBuilder<WeatherInfo>(
-                future: wf,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return _loadingWeatherCard();
-                  }
-                  if (snapshot.hasError) {
-                    return _errorWeatherCard(snapshot.error.toString());
-                  }
-                  if (!snapshot.hasData) {
-                    return _errorWeatherCard('No weather data returned.');
-                  }
-                  final w = snapshot.data!;
-                  return _weatherCard(w);
+                future: _weatherFuture,
+                builder: (context, weatherSnap) {
+                  if (weatherSnap.connectionState == ConnectionState.waiting) return _loadingCard();
+                  if (weatherSnap.hasError) return _errorCard(weatherSnap.error.toString());
+                  if (!weatherSnap.hasData) return _errorCard('No weather data.');
+
+                  final w = weatherSnap.data!;
+
+                  return Column(
+                    children: [
+                      _weatherCard(w),
+                      const SizedBox(height: 10),
+                      _weatherActionsRow(),
+                      const SizedBox(height: 18),
+                      
+                      // Outfit Section with Wardrobe Data
+                      StreamBuilder<QuerySnapshot>(
+                        stream: _wardrobeStream,
+                        builder: (context, wardrobeSnap) {
+                          final docs = wardrobeSnap.data?.docs ?? [];
+                          return _smartOutfitSection(context, w, docs);
+                        },
+                      ),
+                    ],
+                  );
                 },
               ),
 
-            const SizedBox(height: 10),
-            _weatherActionsRow(),
             const SizedBox(height: 18),
-
-            _todayOutfitCard(context),
-            const SizedBox(height: 18),
-
             _primaryCta(context),
           ],
         ),
@@ -111,7 +130,263 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ---------------- UI SECTIONS ----------------
+  // ---------------- SMART OUTFIT ENGINE ----------------
+
+  Widget _smartOutfitSection(BuildContext context, WeatherInfo w, List<QueryDocumentSnapshot> wardrobeItems) {
+    // 1. Analyze Weather Conditions
+    final bool isRainy = w.isRaining || w.condition.toLowerCase().contains('rain');
+    final bool isCold = w.tempC < 20;
+    final bool isHot = w.tempC > 28;
+    final bool isCloudy = w.condition.toLowerCase().contains('cloud');
+
+    // 2. Determine Needed Categories & Search Labels
+    String topLabel = isHot ? "T-shirt" : "Shirt";
+    String bottomLabel = isHot ? "Shorts" : "Trousers";
+    String outerLabel = isRainy ? "Raincoat" : (isCold ? "Jacket" : "Hoodie");
+    String shoeLabel = isRainy ? "Boots" : "Sneakers";
+
+    // 3. Forecast Logic (Preparation Text)
+    String prepText = "Conditions look clear. Standard daily wear is fine.";
+    IconData prepIcon = Icons.wb_sunny_outlined;
+    Color prepColor = Colors.orange;
+
+    if (isRainy) {
+      prepText = "Rain detected in forecast. Waterproof gear is essential today.";
+      prepIcon = Icons.umbrella;
+      prepColor = Colors.blue;
+    } else if (isCloudy && !isRainy) {
+      prepText = "Overcast skies ahead. Pack a small umbrella just in case.";
+      prepIcon = Icons.cloud_queue;
+      prepColor = Colors.blueGrey;
+    } else if (isCold) {
+      prepText = "Temps are dropping. Layer up to stay warm this evening.";
+      prepIcon = Icons.ac_unit;
+      prepColor = Colors.cyan;
+    } else if (isHot) {
+      prepText = "High UV levels expected. Wear breathable fabrics.";
+      prepIcon = Icons.wb_sunny;
+      prepColor = Colors.orange;
+    }
+
+    return Column(
+      children: [
+        // --- A. Forecast & Prep Card ---
+        _cardShell(
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: prepColor.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(prepIcon, color: prepColor, size: 24),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Forecast & Preparation", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey)),
+                    const SizedBox(height: 4),
+                    Text(prepText, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // --- B. The Smart Outfit Card ---
+        _cardShell(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    "Today's Look",
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                  ),
+                  // REFRESH BUTTON
+                  InkWell(
+                    onTap: _cycleOutfit,
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryGreen.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        children: const [
+                          Icon(Icons.refresh, size: 16, color: AppColors.primaryGreen),
+                          SizedBox(width: 4),
+                          Text("Shuffle", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryGreen)),
+                        ],
+                      ),
+                    ),
+                  )
+                ],
+              ),
+              const SizedBox(height: 16),
+              
+              // Outfit Grid
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Column 1: Top + Outerwear
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _outfitItemSlot(context, "Tops", wardrobeItems, topLabel),
+                        const SizedBox(height: 12),
+                        if (isCold || isRainy || isCloudy)
+                          _outfitItemSlot(context, "Outerwear", wardrobeItems, outerLabel),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Column 2: Bottom + Shoes
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _outfitItemSlot(context, "Bottoms", wardrobeItems, bottomLabel),
+                        const SizedBox(height: 12),
+                        _outfitItemSlot(context, "Shoes", wardrobeItems, shoeLabel),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // --- Logic: Cycle through wardrobe items using _outfitSeed ---
+  Widget _outfitItemSlot(BuildContext context, String category, List<QueryDocumentSnapshot> docs, String label) {
+    // 1. Filter User's Wardrobe for this category
+    final matchingItems = docs.where((d) {
+      final data = d.data() as Map<String, dynamic>;
+      final cat = (data['category'] ?? '').toString();
+      final name = (data['name'] ?? '').toString();
+      // Match category OR fuzzy name search
+      return cat == category || name.toLowerCase().contains(label.toLowerCase());
+    }).toList();
+
+    // 2. If User HAS items
+    if (matchingItems.isNotEmpty) {
+      // ** CYCLING LOGIC **: Use modulus operator to cycle through list
+      final index = _outfitSeed % matchingItems.length;
+      final item = matchingItems[index].data() as Map<String, dynamic>;
+      
+      final imageUrl = item['imageUrl'] ?? '';
+      final name = item['name'] ?? label;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(category, style: const TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold)),
+              if (matchingItems.length > 1)
+                const Icon(Icons.swap_horiz, size: 12, color: Colors.grey), // Indication that it can change
+            ],
+          ),
+          const SizedBox(height: 4),
+          Container(
+            height: 120,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              image: imageUrl.isNotEmpty 
+                ? DecorationImage(image: NetworkImage(imageUrl), fit: BoxFit.cover)
+                : null,
+              color: Colors.grey[100],
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: imageUrl.isEmpty 
+              ? const Center(child: Icon(Icons.checkroom, color: Colors.grey)) 
+              : null,
+          ),
+          const SizedBox(height: 4),
+          Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        ],
+      );
+    } 
+    
+    // 3. If User DOES NOT HAVE item -> Link to Shop
+    else {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("Need: $label", style: const TextStyle(fontSize: 11, color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          InkWell(
+            onTap: () {
+              Navigator.push(
+                context, 
+                MaterialPageRoute(builder: (_) => ShopScreen(initialCategory: category, initialQuery: label))
+              );
+            },
+            child: Container(
+              height: 120,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                color: Colors.orange.withOpacity(0.05),
+                border: Border.all(color: Colors.orange.withOpacity(0.3), style: BorderStyle.solid),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.add_shopping_cart, color: Colors.orange, size: 28),
+                  const SizedBox(height: 4),
+                  Text("Find $label", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+  }
+
+  // ---------------- UI HELPERS (Unchanged) ----------------
+
+  Widget _loadingCard() {
+    return _cardShell(child: const SizedBox(height: 100, child: Center(child: CircularProgressIndicator())));
+  }
+
+  Widget _errorCard(String msg) {
+    return _cardShell(child: Text("Error: $msg"));
+  }
+
+  Widget _cardShell({required Widget child}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            blurRadius: 16,
+            offset: const Offset(0, 10),
+            color: Colors.black.withOpacity(0.06),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
 
   Widget _heroHeader() {
     return Container(
@@ -143,10 +418,7 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.white.withOpacity(0.18),
               shape: BoxShape.circle,
             ),
-            child: const Icon(
-              Icons.cloud_outlined,
-              color: Colors.white,
-            ),
+            child: const Icon(Icons.cloud_outlined, color: Colors.white),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -155,20 +427,12 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 const Text(
                   'Weather Wardrobe',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   'Location: $_city',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.9),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13, fontWeight: FontWeight.w600),
                 ),
               ],
             ),
@@ -181,11 +445,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             child: const Text(
               'Live',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
-              ),
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
             ),
           ),
         ],
@@ -196,30 +456,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _weatherActionsRow() {
     return Row(
       children: [
-        Expanded(
-          child: _pillButton(
-            icon: Icons.location_on_outlined,
-            label: 'Change city',
-            onTap: _openCitySelector,
-          ),
-        ),
+        Expanded(child: _pillButton(icon: Icons.location_on_outlined, label: 'Change city', onTap: _openCitySelector)),
         const SizedBox(width: 10),
-        Expanded(
-          child: _pillButton(
-            icon: Icons.refresh,
-            label: 'Refresh',
-            onTap: _refreshWeather,
-          ),
-        ),
+        Expanded(child: _pillButton(icon: Icons.refresh, label: 'Refresh', onTap: _refreshWeather)),
       ],
     );
   }
 
-  Widget _pillButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
+  Widget _pillButton({required IconData icon, required String label, required VoidCallback onTap}) {
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: onTap,
@@ -235,95 +479,27 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Icon(icon, size: 18, color: AppColors.primaryGreen),
             const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(
-                fontWeight: FontWeight.w800,
-                color: AppColors.primaryGreen,
-              ),
-            ),
+            Text(label, style: const TextStyle(fontWeight: FontWeight.w800, color: AppColors.primaryGreen)),
           ],
         ),
       ),
     );
   }
 
-  Widget _loadingWeatherCard() {
-    return _cardShell(
-      child: const SizedBox(
-        height: 140,
-        child: Center(child: CircularProgressIndicator()),
-      ),
-    );
-  }
-
-  Widget _errorWeatherCard(String msg) {
-    return _cardShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Today’s Weather',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Failed to load weather.\n$msg',
-            style: const TextStyle(color: AppColors.textMuted),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              ElevatedButton(
-                onPressed: _refreshWeather,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryGreen,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: const Text('Try again'),
-              ),
-              const SizedBox(width: 10),
-              OutlinedButton(
-                onPressed: _openCitySelector,
-                style: OutlinedButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: const Text('Change city'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _weatherCard(WeatherInfo w) {
     final icon = _conditionIcon(w.condition);
-
     return _cardShell(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Today’s Weather',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
+          const Text('Today’s Weather', style: TextStyle(fontWeight: FontWeight.w800)),
           const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
                 child: Text(
                   '${w.tempC.toStringAsFixed(0)}°C',
-                  style: const TextStyle(
-                    fontSize: 42,
-                    fontWeight: FontWeight.w900,
-                    color: AppColors.primaryGreen,
-                  ),
+                  style: const TextStyle(fontSize: 42, fontWeight: FontWeight.w900, color: AppColors.primaryGreen),
                 ),
               ),
               Container(
@@ -337,27 +513,16 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           const SizedBox(height: 6),
-          Text(
-            '${w.condition} • ${w.city}',
-            style: const TextStyle(color: AppColors.textMuted),
-          ),
+          Text('${w.condition} • ${w.city}', style: const TextStyle(color: AppColors.textMuted)),
           const SizedBox(height: 14),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
+              _miniChip(icon: Icons.water_drop_outlined, label: 'Humidity ${w.humidity}%'),
+              _miniChip(icon: Icons.air, label: 'Wind ${w.windKmh.toStringAsFixed(0)} km/h'),
               _miniChip(
-                icon: Icons.water_drop_outlined,
-                label: 'Humidity ${w.humidity}%',
-              ),
-              _miniChip(
-                icon: Icons.air,
-                label: 'Wind ${w.windKmh.toStringAsFixed(0)} km/h',
-              ),
-              _miniChip(
-                icon: w.isRaining
-                    ? Icons.beach_access_rounded
-                    : Icons.wb_sunny_outlined,
+                icon: w.isRaining ? Icons.beach_access_rounded : Icons.wb_sunny_outlined,
                 label: w.isRaining ? 'Rain: Yes' : 'Rain: No',
               ),
             ],
@@ -380,131 +545,44 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Icon(icon, size: 16, color: AppColors.primaryGreen),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
-            ),
-          ),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
         ],
       ),
     );
   }
 
-  Widget _cardShell({required Widget child}) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 16,
-            offset: const Offset(0, 10),
-            color: Colors.black.withOpacity(0.06),
-          ),
-        ],
-      ),
-      child: child,
-    );
-  }
 
   IconData _conditionIcon(String condition) {
     final lower = condition.toLowerCase();
-    if (lower.contains('clear') || lower.contains('sun')) {
-      return Icons.wb_sunny_rounded;
-    }
+    if (lower.contains('clear') || lower.contains('sun')) return Icons.wb_sunny_rounded;
     if (lower.contains('cloud')) return Icons.cloud_rounded;
-    if (lower.contains('rain') || lower.contains('drizzle')) {
-      return Icons.beach_access_rounded;
-    }
+    if (lower.contains('rain') || lower.contains('drizzle')) return Icons.beach_access_rounded;
     if (lower.contains('thunder')) return Icons.flash_on_rounded;
     return Icons.cloud_outlined;
   }
 
-  Widget _todayOutfitCard(BuildContext context) {
-    return _cardShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Today’s Outfit',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Generated in Suggestion module',
-            style: TextStyle(fontSize: 14),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Use the button below to get a personalized recommendation.',
-            style: TextStyle(color: AppColors.textMuted),
-          ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerRight,
-            child: OutlinedButton.icon(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Outfit details (optional later)')),
-                );
-              },
-              icon: const Icon(Icons.visibility_outlined, size: 18),
-              label: const Text('View details'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primaryGreen,
-                side: const BorderSide(color: AppColors.border),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-        ],
+  Widget _primaryCta(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () {
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const SuggestionContextScreen()));
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: AppColors.primaryGreen,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.auto_awesome_outlined, color: Colors.white),
+            SizedBox(width: 8),
+            Text('Get Personalized Suggestion', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+          ],
+        ),
       ),
     );
   }
-
-    Widget _primaryCta(BuildContext context) {
-  return InkWell(
-    borderRadius: BorderRadius.circular(14),
-    onTap: () {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => const SuggestionContextScreen(),
-        ),
-      );
-    },
-    child: Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      decoration: BoxDecoration(
-        color: AppColors.primaryGreen,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: const [
-          Icon(Icons.auto_awesome_outlined, color: Colors.white),
-          SizedBox(width: 8),
-          Text(
-            'Get Personalized Suggestion',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
-              fontSize: 16,
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-
 }

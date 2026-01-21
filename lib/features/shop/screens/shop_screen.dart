@@ -8,7 +8,7 @@ import '../services/cart_service.dart';
 import 'cart_screen.dart';
 import 'create_listing_screen.dart';
 import 'product_details_screen.dart'; 
-
+import '/notifications/screens/notifications_screen.dart';
 class ShopScreen extends StatefulWidget {
   final String? initialCategory;
   final String? initialWarmth;
@@ -124,6 +124,13 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         actions: [
+          IconButton(
+            tooltip: 'Notifications',
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+            },
+          ),
           StreamBuilder(
             stream: CartService.streamCart(),
             builder: (context, snap) {
