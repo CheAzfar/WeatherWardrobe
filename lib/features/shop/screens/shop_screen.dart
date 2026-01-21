@@ -8,7 +8,9 @@ import '../services/cart_service.dart';
 import 'cart_screen.dart';
 import 'create_listing_screen.dart';
 import 'product_details_screen.dart'; 
+// Adjust this import path if your notifications folder is located elsewhere
 import '/notifications/screens/notifications_screen.dart';
+
 class ShopScreen extends StatefulWidget {
   final String? initialCategory;
   final String? initialWarmth;
@@ -252,10 +254,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
   }
 
   // ---------------------------------------------------------------------------
-  // MY LISTINGS TAB (Updated with Active/Sold logic)
-  // ---------------------------------------------------------------------------
-  // ---------------------------------------------------------------------------
-  // MY LISTINGS TAB (FIXED)
+  // MY LISTINGS TAB
   // ---------------------------------------------------------------------------
   Widget _buildMyListingsTab() {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -294,14 +293,14 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
               
               final docs = snap.data?.docs ?? [];
               
-              // FIX: Filter the raw docs FIRST, using 'd' correctly
+              // Filter logic for My Listings
               final filteredDocs = docs.where((d) {
                 final data = d.data();
                 final status = data['status'] ?? 'active';
                 final isAvailable = data['isAvailable'] ?? true;
 
                 if (_myListingsFilter == 'Active') {
-                  // Show if available AND not marked sold
+                  // Show if available AND not sold
                   return isAvailable == true && status != 'sold';
                 } else {
                   // Show if sold OR unavailable
@@ -309,7 +308,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
                 }
               }).toList();
 
-              // THEN convert the filtered docs to your model
               final filteredListings = filteredDocs
                   .map((d) => MarketplaceListing.fromDoc(d))
                   .toList();
@@ -363,13 +361,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
         ),
       ],
     );
-  }
-  
-  // Helper to check availability safely
-  bool isAvailable(MarketplaceListing item) {
-    // We can't see the raw doc here easily without re-parsing, 
-    // but the stream builder above does the map lookup.
-    return true; 
   }
 
   Widget _myListingToggleBtn(String text, bool isSelected) {

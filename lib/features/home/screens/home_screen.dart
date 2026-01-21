@@ -26,7 +26,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // Stream to listen to user's real wardrobe changes live
   Stream<QuerySnapshot>? _wardrobeStream;
 
-  // New: Controls which item index is picked (for refreshing outfit)
+  // Controls which item index is picked (for shuffling outfit)
   int _outfitSeed = 0;
 
   @override
@@ -65,7 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _cycleOutfit() {
     setState(() {
-      _outfitSeed++; // Increment seed to pick next available item
+      _outfitSeed++; 
     });
   }
 
@@ -77,6 +77,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (chosen != null) {
       await _initCityAndWeather();
     }
+  }
+
+  // --- NEW LOGIC: Determine required warmth based on Temp ---
+  String _getRequiredWarmth(double tempC) {
+    if (tempC >= 25) return 'Light';   // Hot -> Shorts/T-shirts
+    if (tempC >= 18) return 'Medium';  // Mild -> Jeans/Hoodies
+    return 'Heavy';                    // Cold -> Jackets/Coats
   }
 
   @override
@@ -130,47 +137,46 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ---------------- SMART OUTFIT ENGINE ----------------
+  // ---------------- SMART OUTFIT ENGINE (UPDATED) ----------------
 
   Widget _smartOutfitSection(BuildContext context, WeatherInfo w, List<QueryDocumentSnapshot> wardrobeItems) {
-    // 1. Analyze Weather Conditions
+    // 1. Analyze Weather
     final bool isRainy = w.isRaining || w.condition.toLowerCase().contains('rain');
-    final bool isCold = w.tempC < 20;
-    final bool isHot = w.tempC > 28;
-    final bool isCloudy = w.condition.toLowerCase().contains('cloud');
+    final double temp = w.tempC;
+    
+    // 2. Determine Logic
+    final String requiredWarmth = _getRequiredWarmth(temp);
+    
+    // Logic: Only show Outerwear if it is Cold (Heavy) or Rain is expected
+    // This prevents showing jackets in 30 degree weather
+    final bool needsOuterwear = (requiredWarmth == 'Heavy') || isRainy;
 
-    // 2. Determine Needed Categories & Search Labels
-    String topLabel = isHot ? "T-shirt" : "Shirt";
-    String bottomLabel = isHot ? "Shorts" : "Trousers";
-    String outerLabel = isRainy ? "Raincoat" : (isCold ? "Jacket" : "Hoodie");
-    String shoeLabel = isRainy ? "Boots" : "Sneakers";
-
-    // 3. Forecast Logic (Preparation Text)
-    String prepText = "Conditions look clear. Standard daily wear is fine.";
+    // 3. Prep Text
+    String prepText = "Conditions are mild.";
     IconData prepIcon = Icons.wb_sunny_outlined;
     Color prepColor = Colors.orange;
 
     if (isRainy) {
-      prepText = "Rain detected in forecast. Waterproof gear is essential today.";
+      prepText = "Rain detected. Waterproof gear is recommended.";
       prepIcon = Icons.umbrella;
       prepColor = Colors.blue;
-    } else if (isCloudy && !isRainy) {
-      prepText = "Overcast skies ahead. Pack a small umbrella just in case.";
-      prepIcon = Icons.cloud_queue;
-      prepColor = Colors.blueGrey;
-    } else if (isCold) {
-      prepText = "Temps are dropping. Layer up to stay warm this evening.";
+    } else if (requiredWarmth == 'Heavy') {
+      prepText = "It's cold (${temp.toInt()}°C). Wear heavy layers.";
       prepIcon = Icons.ac_unit;
       prepColor = Colors.cyan;
-    } else if (isHot) {
-      prepText = "High UV levels expected. Wear breathable fabrics.";
+    } else if (requiredWarmth == 'Light') {
+      prepText = "It's warm (${temp.toInt()}°C). Light clothing is best.";
       prepIcon = Icons.wb_sunny;
       prepColor = Colors.orange;
+    } else {
+      prepText = "Pleasant weather. Standard comfort wear.";
+      prepIcon = Icons.cloud_queue;
+      prepColor = Colors.blueGrey;
     }
 
     return Column(
       children: [
-        // --- A. Forecast & Prep Card ---
+        // Forecast & Prep Card
         _cardShell(
           child: Row(
             children: [
@@ -187,7 +193,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text("Forecast & Preparation", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey)),
+                    const Text("Forecast & Advice", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey)),
                     const SizedBox(height: 4),
                     Text(prepText, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                   ],
@@ -198,7 +204,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 16),
 
-        // --- B. The Smart Outfit Card ---
+        // Smart Outfit Card
         _cardShell(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -210,7 +216,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     "Today's Look",
                     style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
                   ),
-                  // REFRESH BUTTON
                   InkWell(
                     onTap: _cycleOutfit,
                     borderRadius: BorderRadius.circular(20),
@@ -237,25 +242,26 @@ class _HomeScreenState extends State<HomeScreen> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Column 1: Top + Outerwear
+                  // Column 1
                   Expanded(
                     child: Column(
                       children: [
-                        _outfitItemSlot(context, "Tops", wardrobeItems, topLabel),
+                        _outfitItemSlot(context, "Tops", wardrobeItems, requiredWarmth),
                         const SizedBox(height: 12),
-                        if (isCold || isRainy || isCloudy)
-                          _outfitItemSlot(context, "Outerwear", wardrobeItems, outerLabel),
+                        // Only show Outerwear if truly needed
+                        if (needsOuterwear)
+                          _outfitItemSlot(context, "Outerwear", wardrobeItems, isRainy ? 'Rain' : requiredWarmth),
                       ],
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // Column 2: Bottom + Shoes
+                  // Column 2
                   Expanded(
                     child: Column(
                       children: [
-                        _outfitItemSlot(context, "Bottoms", wardrobeItems, bottomLabel),
+                        _outfitItemSlot(context, "Bottoms", wardrobeItems, requiredWarmth),
                         const SizedBox(height: 12),
-                        _outfitItemSlot(context, "Shoes", wardrobeItems, shoeLabel),
+                        _outfitItemSlot(context, "Shoes", wardrobeItems, isRainy ? 'Rain' : requiredWarmth),
                       ],
                     ),
                   ),
@@ -268,25 +274,37 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- Logic: Cycle through wardrobe items using _outfitSeed ---
-  Widget _outfitItemSlot(BuildContext context, String category, List<QueryDocumentSnapshot> docs, String label) {
-    // 1. Filter User's Wardrobe for this category
+  // --- UPDATED LOGIC: Match by Warmth Level, not Name ---
+  Widget _outfitItemSlot(BuildContext context, String category, List<QueryDocumentSnapshot> docs, String targetWarmth) {
+    
+    // Filter Wardrobe
     final matchingItems = docs.where((d) {
       final data = d.data() as Map<String, dynamic>;
-      final cat = (data['category'] ?? '').toString();
-      final name = (data['name'] ?? '').toString();
-      // Match category OR fuzzy name search
-      return cat == category || name.toLowerCase().contains(label.toLowerCase());
+      final String itemCat = (data['category'] ?? '').toString();
+      // Default to 'Light' if not set
+      final String itemWarmth = (data['warmthLevel'] ?? 'Light').toString();
+
+      // 1. Must match Category
+      if (itemCat != category) return false;
+
+      // 2. Special Logic for Rain (Shoes/Outerwear)
+      if (targetWarmth == 'Rain') {
+        // Simple logic: Assume "Heavy" or "Medium" is better for rain than "Light"
+        return itemWarmth == 'Heavy' || itemWarmth == 'Medium'; 
+      }
+
+      // 3. Strict Warmth Match
+      return itemWarmth == targetWarmth;
     }).toList();
 
-    // 2. If User HAS items
+    // If User HAS items
     if (matchingItems.isNotEmpty) {
-      // ** CYCLING LOGIC **: Use modulus operator to cycle through list
+      // Modulus cycle logic
       final index = _outfitSeed % matchingItems.length;
       final item = matchingItems[index].data() as Map<String, dynamic>;
       
       final imageUrl = item['imageUrl'] ?? '';
-      final name = item['name'] ?? label;
+      final name = item['name'] ?? category;
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -296,7 +314,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Text(category, style: const TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold)),
               if (matchingItems.length > 1)
-                const Icon(Icons.swap_horiz, size: 12, color: Colors.grey), // Indication that it can change
+                const Icon(Icons.swap_horiz, size: 12, color: Colors.grey),
             ],
           ),
           const SizedBox(height: 4),
@@ -321,18 +339,22 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } 
     
-    // 3. If User DOES NOT HAVE item -> Link to Shop
+    // If User DOES NOT HAVE item -> Link to Shop
     else {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text("Need: $label", style: const TextStyle(fontSize: 11, color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          Text("Need: $targetWarmth", style: const TextStyle(fontSize: 11, color: Colors.redAccent, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           InkWell(
             onTap: () {
               Navigator.push(
                 context, 
-                MaterialPageRoute(builder: (_) => ShopScreen(initialCategory: category, initialQuery: label))
+                // Pass the needed warmth to the shop!
+                MaterialPageRoute(builder: (_) => ShopScreen(
+                  initialCategory: category, 
+                  initialWarmth: targetWarmth == 'Rain' ? 'Heavy' : targetWarmth
+                ))
               );
             },
             child: Container(
@@ -348,7 +370,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   const Icon(Icons.add_shopping_cart, color: Colors.orange, size: 28),
                   const SizedBox(height: 4),
-                  Text("Find $label", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12)),
+                  Text("Buy $category", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12)),
                 ],
               ),
             ),
@@ -358,7 +380,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ---------------- UI HELPERS (Unchanged) ----------------
+  // ---------------- UI HELPERS (Same as before) ----------------
 
   Widget _loadingCard() {
     return _cardShell(child: const SizedBox(height: 100, child: Center(child: CircularProgressIndicator())));
@@ -550,7 +572,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
 
   IconData _conditionIcon(String condition) {
     final lower = condition.toLowerCase();
