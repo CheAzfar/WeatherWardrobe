@@ -21,10 +21,13 @@ class OrderModel {
       id: doc.id,
       totalAmount: (data['totalAmount'] ?? 0.0).toDouble(),
       status: data['status'] ?? 'Processing',
-      // FIX 1: Map 'createdAt' (from service) to 'date'
       date: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      // FIX 2: Count the items in the list
-      itemCount: (data['items'] as List?)?.length ?? 0,
+      
+      // --- FIX IS HERE ---
+      // 1. Try reading the new 'itemsCount' number we save.
+      // 2. If that doesn't exist (old orders), try counting the 'items' array.
+      // 3. If neither exists, default to 0.
+      itemCount: (data['itemsCount'] as num?)?.toInt() ?? (data['items'] as List?)?.length ?? 0,
     );
   }
 }

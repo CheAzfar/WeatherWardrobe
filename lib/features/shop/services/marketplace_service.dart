@@ -13,7 +13,7 @@ class MarketplaceService {
   // -------------------------
   static String _normalizeWarmth(String v) {
     final lower = v.trim().toLowerCase();
-    if (lower == 'warm') return 'Heavy'; // backward compatibility
+    if (lower == 'warm') return 'Heavy';
     if (lower == 'heavy') return 'Heavy';
     if (lower == 'medium') return 'Medium';
     if (lower == 'light') return 'Light';
@@ -21,7 +21,7 @@ class MarketplaceService {
   }
 
   // -------------------------
-  // 1) Create Listing (UPDATED)
+  // 1) Create Listing
   // -------------------------
   static Future<String?> createListing({
     required String name,
@@ -29,7 +29,6 @@ class MarketplaceService {
     required String warmthLevel,
     required double price,
     required String imageUrl,
-    // --- NEW PARAMS ADDED HERE ---
     required String size,
     required String description,
   }) async {
@@ -39,21 +38,15 @@ class MarketplaceService {
     final doc = await _db.collection('marketplace_listings').add({
       'title': name.trim(),
       'name': name.trim(),
-
       'category': category.trim(),
       'warmthLevel': _normalizeWarmth(warmthLevel),
       'price': price,
       'imageUrl': imageUrl,
-
-      // Save the new fields
       'size': size,
       'description': description.trim(),
-
       'sellerId': user.uid,
-
       'isAvailable': true,
       'status': 'active',
-
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -62,7 +55,7 @@ class MarketplaceService {
   }
 
   // -------------------------
-  // 2) Create Order (Kept same as before)
+  // 2) Create Order (UPDATED)
   // -------------------------
   static Future<String?> createOrder({
     required List<MarketplaceListing> items,
@@ -77,23 +70,22 @@ class MarketplaceService {
     final total = subtotalAmount + fee;
 
     try {
-      // 1) Create order doc
-      final orderRef = await _db
-          .collection('users')
-          .doc(uid)
-          .collection('orders')
-          .add({
-        'userId': uid,
+      // Create the order in the ROOT 'orders' collection
+      final orderRef = await _db.collection('orders').add({
+        'buyerId': uid,
         'subtotalAmount': subtotalAmount,
         'platformFeeRate': 0.05,
         'platformFee': fee,
         'totalAmount': total,
         'paymentRef': paymentRef,
-        'status': 'paid',
+        
+        // --- CHANGED HERE: Immediately 'completed' ---
+        'status': 'completed', 
+        
         'createdAt': FieldValue.serverTimestamp(),
+        'itemsCount': items.length, 
       });
 
-      // 2) Add order items + fulfill purchase (batch)
       final batch = _db.batch();
 
       for (final it in items) {
@@ -108,7 +100,6 @@ class MarketplaceService {
           'price': it.price,
           'imageUrl': it.imageUrl,
           'sellerId': it.sellerId,
-          // Save size/desc if available in model
           'size': it.size, 
           'createdAt': FieldValue.serverTimestamp(),
         });
@@ -138,7 +129,7 @@ class MarketplaceService {
             'purchased': true,
             'isPurchased': true,
             'purchaseStatus': 'purchased',
-            'source': 'marketplace',
+            'source': 'purchase',
             'listingId': it.id,
             'sellerId': it.sellerId,
             'boughtAt': FieldValue.serverTimestamp(),
@@ -148,12 +139,11 @@ class MarketplaceService {
       }
 
       await batch.commit();
-
-      // 3) Clear cart
       await CartService.clearCart();
 
       return orderRef.id;
-    } catch (_) {
+    } catch (e) {
+      print("Error creating order: $e");
       return null;
     }
   }
