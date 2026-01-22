@@ -2,14 +2,17 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import '../../../core/constants/app_colors.dart';
-import '../models/marketplace_listing.dart';
-import '../services/cart_service.dart';
-import 'cart_screen.dart';
-import 'create_listing_screen.dart';
-import 'product_details_screen.dart'; 
-// Adjust this import path if your notifications folder is located elsewhere
-import '/notifications/screens/notifications_screen.dart';
+// Use strict package paths for your own files to avoid folder errors
+import 'package:weather_wardrobe/core/constants/app_colors.dart';
+import 'package:weather_wardrobe/features/shop/models/marketplace_listing.dart';
+import 'package:weather_wardrobe/features/shop/services/cart_service.dart';
+import 'package:weather_wardrobe/features/shop/screens/cart_screen.dart';
+import 'package:weather_wardrobe/features/shop/screens/create_listing_screen.dart';
+import 'package:weather_wardrobe/features/shop/screens/product_details_screen.dart';
+
+// ✅ CORRECT IMPORTS FOR NOTIFICATIONS (Pointing to root lib/notifications)
+import 'package:weather_wardrobe/notifications/screens/notifications_screen.dart';
+import 'package:weather_wardrobe/notifications/services/notification_service.dart';
 
 class ShopScreen extends StatefulWidget {
   final String? initialCategory;
@@ -39,7 +42,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
   final TextEditingController _searchCtrl = TextEditingController();
 
   // My Listings Tab Filter
-  String _myListingsFilter = 'Active'; // 'Active' or 'Sold'
+  String _myListingsFilter = 'Active'; 
 
   final List<String> _categoryOptions = const ['All', 'Tops', 'Bottoms', 'Outerwear', 'Shoes'];
   final List<String> _warmthOptions = const ['All', 'Light', 'Medium', 'Heavy'];
@@ -126,13 +129,53 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         actions: [
-          IconButton(
-            tooltip: 'Notifications',
-            icon: const Icon(Icons.notifications_outlined),
-            onPressed: () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+          // ----------------------------------------------------
+          // NOTIFICATION ICON (With Red Badge)
+          // ----------------------------------------------------
+          StreamBuilder<int>(
+            stream: NotificationService.streamUnreadCount(),
+            builder: (context, snapshot) {
+              final unreadCount = snapshot.data ?? 0;
+              
+              return Stack(
+                children: [
+                  IconButton(
+                    tooltip: 'Notifications',
+                    icon: const Icon(Icons.notifications_outlined),
+                    onPressed: () {
+                      Navigator.push(
+                        context, 
+                        // Removed 'const' to prevent build errors
+                        MaterialPageRoute(builder: (_) => NotificationsScreen())
+                      );
+                    },
+                  ),
+                  if (unreadCount > 0)
+                    Positioned(
+                      right: 12,
+                      top: 12,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        constraints: const BoxConstraints(minWidth: 8, minHeight: 8),
+                        child: Text(
+                          unreadCount > 9 ? '9+' : '$unreadCount',
+                          style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                ],
+              );
             },
           ),
+          
+          // ----------------------------------------------------
+          // CART ICON
+          // ----------------------------------------------------
           StreamBuilder(
             stream: CartService.streamCart(),
             builder: (context, snap) {
@@ -264,7 +307,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
 
     return Column(
       children: [
-        // 1. Toggle Active/Sold
         Container(
           margin: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -279,7 +321,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
           ),
         ),
 
-        // 2. List
         Expanded(
           child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: FirebaseFirestore.instance
@@ -293,17 +334,14 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
               
               final docs = snap.data?.docs ?? [];
               
-              // Filter logic for My Listings
               final filteredDocs = docs.where((d) {
                 final data = d.data();
                 final status = data['status'] ?? 'active';
                 final isAvailable = data['isAvailable'] ?? true;
 
                 if (_myListingsFilter == 'Active') {
-                  // Show if available AND not sold
                   return isAvailable == true && status != 'sold';
                 } else {
-                  // Show if sold OR unavailable
                   return status == 'sold' || isAvailable == false;
                 }
               }).toList();
@@ -408,10 +446,6 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       await FirebaseFirestore.instance.collection('marketplace_listings').doc(id).delete();
     }
   }
-
-  // ---------------------------------------------------------------------------
-  // WIDGETS
-  // ---------------------------------------------------------------------------
 
   Widget _searchBar() {
     return TextField(

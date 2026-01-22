@@ -45,7 +45,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
     _initCityAndWeather();
   }
-
+  // --- DYNAMIC WEATHER GRADIENT ---
+  LinearGradient _getWeatherGradient(double tempC) {
+    if (tempC >= 30) {
+      // Hot: Blazing Orange to Gold (Sunny/Hot)
+      return const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFFF8008), Color(0xFFFFC837)], 
+      );
+    } else if (tempC >= 25) {
+      // Warm: Soft Orange to Yellow
+      return const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFF2994A), Color(0xFFF2C94C)], 
+      );
+    } else if (tempC >= 20) {
+      // Comfortable: Teal to Green (Pleasant)
+      return const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF11998e), Color(0xFF38ef7d)], 
+      );
+    } else if (tempC >= 10) {
+      // Cool: Blue to Cyan (Chilly)
+      return const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF2193b0), Color(0xFF6dd5ed)], 
+      );
+    } else {
+      // Cold: Dark Slate to Deep Blue (Freezing/Night)
+      return const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF373B44), Color(0xFF4286f4)], 
+      );
+    }
+  }
   Future<void> _initCityAndWeather() async {
     try {
       final c = await CityStore.fetchCity();
@@ -510,44 +548,115 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _weatherCard(WeatherInfo w) {
     final icon = _conditionIcon(w.condition);
-    return _cardShell(
+    // 1. Get the dynamic gradient
+    final backgroundGradient = _getWeatherGradient(w.tempC); 
+    
+    // 2. Text color should be white to stand out against bright gradients
+    const textColor = Colors.white; 
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(22), 
+      decoration: BoxDecoration(
+        gradient: backgroundGradient, // <--- APPLY GRADIENT HERE
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+            // The shadow glows with the same color as the card!
+            color: backgroundGradient.colors.first.withValues(alpha: 0.4), 
+          ),
+        ],
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Today’s Weather', style: TextStyle(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 12),
+          // --- Top Row: City & Icon ---
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(
-                child: Text(
-                  '${w.tempC.toStringAsFixed(0)}°C',
-                  style: const TextStyle(fontSize: 42, fontWeight: FontWeight.w900, color: AppColors.primaryGreen),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    w.city, 
+                    style: const TextStyle(color: textColor, fontSize: 20, fontWeight: FontWeight.bold)
+                  ),
+                  Text(
+                    'Today', 
+                    style: TextStyle(color: textColor.withValues(alpha: 0.8), fontSize: 14)
+                  ),
+                ],
+              ),
+              // Use a white version of the icon or the existing colored one
+              Icon(icon, size: 48, color: textColor),
+            ],
+          ),
+          
+          const SizedBox(height: 20),
+          
+          // --- Middle Row: Big Temp ---
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                '${w.tempC.toStringAsFixed(0)}°',
+                style: const TextStyle(
+                  fontSize: 68, 
+                  fontWeight: FontWeight.bold, 
+                  color: textColor,
+                  height: 1.0, 
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppColors.softGreen,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, size: 32, color: AppColors.primaryGreen),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    w.condition,
+                    style: const TextStyle(color: textColor, fontSize: 20, fontWeight: FontWeight.w600),
+                  ),
+                  Text(
+                    'Humidity ${w.humidity}%',
+                    style: TextStyle(color: textColor.withValues(alpha: 0.8), fontSize: 14),
+                  ),
+                ],
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text('${w.condition} • ${w.city}', style: const TextStyle(color: AppColors.textMuted)),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          
+          const SizedBox(height: 25),
+          
+          // --- Bottom Row: Glassmorphism Metrics ---
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _miniChip(icon: Icons.water_drop_outlined, label: 'Humidity ${w.humidity}%'),
-              _miniChip(icon: Icons.air, label: 'Wind ${w.windKmh.toStringAsFixed(0)} km/h'),
-              _miniChip(
-                icon: w.isRaining ? Icons.beach_access_rounded : Icons.wb_sunny_outlined,
-                label: w.isRaining ? 'Rain: Yes' : 'Rain: No',
-              ),
+              _glassMetric(Icons.air, '${w.windKmh.toStringAsFixed(0)} km/h'),
+              _glassMetric(w.isRaining ? Icons.umbrella : Icons.wb_sunny, w.isRaining ? 'Rainy' : 'Clear'),
+              // You can add a third metric here if you like
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Helper for the "Glass" effect bubbles
+  Widget _glassMetric(IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.2), // Semi-transparent white
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: Colors.white),
+          const SizedBox(width: 8),
+          Text(
+            label, 
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)
           ),
         ],
       ),
